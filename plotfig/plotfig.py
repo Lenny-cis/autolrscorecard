@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import matplotlib
 from matplotlib import pyplot as plt
+from IPython import get_ipython
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc
 from utils.performance_utils import gen_ksseries, gen_cut, gen_cross
@@ -19,7 +20,7 @@ from utils.woebin_utils import cut_to_interval
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 300
-
+get_ipython().run_line_magic('matplotlib', 'inline')
 
 def plotROCKS(y, pred, ks_label='MODEL', pos_label=None):
     """画ROC曲线及KS曲线."""

@@ -136,7 +136,7 @@ class EntitySet:
 
     def output(self, entity_id, save_path):
         """输出结果."""
-        filename = '_'.join([entity_id, 'model_report', pd.Timestamp.now().date().strftime('%y%m%d')]) + '.xlsx'
+        filename = '_'.join([entity_id, 'model_report', pd.Timestamp.now().date().strftime('%Y%m%d')]) + '.xlsx'
         writer = pd.ExcelWriter(os.path.join(save_path, filename))
         entity = self.get_entity(entity_id)
         for step, est in self.steps.items():
@@ -160,4 +160,5 @@ class EntitySet:
         raw_df = raw_df.loc[:, pipe_X_cols]
         ret_df = pd.concat([raw_df, pipe_X, entity.df.loc[:, [entity.target]],
                             pd.DataFrame(entity.pred_y)], axis=1)
+        ret_df.loc[:, 'err_ratio'] = ret_df.loc[:, 'flag'] - ret_df.loc[:, 'proba']
         return ret_df

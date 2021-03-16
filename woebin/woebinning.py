@@ -6,9 +6,11 @@ Created on Sun Jan 24 17:51:04 2021
 """
 
 
+import numpy as np
 import pandas as pd
+import pickle as pkl
 from copy import deepcopy
-from .varbinning import VarBinning
+from .varbinning import VarBinning, ExploreVarBinning
 from utils.woebin_utils import make_tqdm_iterator, cut_to_interval
 
 PBAR_FORMAT = "Possible: {total} | Elapsed: {elapsed} | Progress: {l_bar}{bar}"
@@ -94,3 +96,65 @@ class WOEBinning:
                                         'IV', 'SUMIV', 'entropy', 'flogp']]
                 out = pd.concat([out, detail])
         return out
+
+
+class ExploreWOEBinning:
+    """特征全集探索性分箱."""
+
+    def __init__(self, variable_options={}, verbose=True, **kwargs):
+        self.variable_options = variable_options
+        self.kwargs = kwargs
+        self.verbose = verbose
+        self.bin_dic = {}
+        self.best_bins = {}
+
+    def fit(self, X, y):
+        """训练."""
+        print('*'*40, 'EXPLORE BINNING', '*'*40)
+        for x_name in X.columns:
+            vop = deepcopy(self.kwargs)
+            vop.update(self.variable_options.get(x_name, {}))
+            x_binning = ExploreVarBinning(**vop)
+            x_binning.fit(X.loc[:, x_name], y)
+            if x_binning.bin_dic != {}:
+                self.bin_dic.update({x_name: x_binning})
+        return self
+
+    # def load_bins(self, bins):
+    #     """加载数据."""
+    #     for
+    #     self.bin_dic = bins
+    #     return self
+
+    def grid_search_best(self, verbose=True, bins_cnt=None,
+                         variable_shape=None,
+                         slc_mthd=None,
+                         tolerance=np.linspace(0.0, 0.1, 11).tolist(), **kwargs):
+        """网格选择特征全集最优分箱."""
+        print('*'*40, 'GRID SEARCH', '*'*40)
+        for key, val in self.bin_dic.items():
+            x_binning = val
+            x_binning.grid_search_best(verbose=verbose, bins_cnt=bins_cnt,
+                                       variable_shape=variable_shape,
+                                       slc_mthd=slc_mthd, tolerance=tolerance)
+        return self
+
+    def plot_best(self):
+        """图示."""
+        print('*'*40, 'PLOT BEST', '*'*40)
+        for key, val in self.bin_dic.items():
+            x_binning = val
+            x_binning.plot_best()
+        return self
+
+    def dump(self, save_file):
+        """保存类."""
+        print('*'*40, 'SAVE DATA', '*'*40)
+        with open(save_file, 'wb') as f:
+            pkl.dump(self, f)
+
+    @staticmethod
+    def load(save_file):
+        """加载类."""
+        with open(save_file, 'rb') as f:
+            return pkl.load(f)
