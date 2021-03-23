@@ -33,16 +33,16 @@ class VarBinning:
         subjective_cut: [list]
 
     Return_
-        bin_dic: {var_name: {_id: {detail: {},
-                                   IV: iv,
-                                   WOE: {},
-                                   bin_cnt: cnt,
-                                   cut: list,
-                                   describle: str,
-                                   entropy: entropy,
-                                   flogp: -log(p),
-                                   num_inflection: -n_inflection,
-                                   shape: U/I/D}}}}
+        bin_dic: {_id: {detail: {},
+                        IV: iv,
+                        WOE: {},
+                        bin_cnt: cnt,
+                        cut: list,
+                        describle: str,
+                        entropy: entropy,
+                        flogp: -log(p),
+                        num_inflection: -n_inflection,
+                        shape: U/I/D}}}}
         best_dic: upon bin_dic
     """
 
@@ -492,3 +492,98 @@ class ExploreVarBinning:
             details = pd.concat([details, detail])
         plot_bin(details)
         return self
+
+
+# =============================================================================
+# class VarBinning:
+#     """单个变量分箱.
+#
+#     Input_
+#         subjective_cut: [list]|{dict}
+#
+#     Return_
+#         bin_dic: {_id: {detail: {},
+#                         IV: iv,
+#                         WOE: {},
+#                         bin_cnt: cnt,
+#                         cut: list,
+#                         describle: str,
+#                         entropy: entropy,
+#                         flogp: -log(p),
+#                         num_inflection: -n_inflection,
+#                         shape: U/I/D}}}}
+#         best_dic: upon bin_dic
+#     """
+#
+#     def __init__(self, subjective_cut=None, **kwargs):
+#         self.variable_type = type(kwargs.get('variable_type'))
+#         self.describe = kwargs.get('describe', '未知')
+#         self.subjective_cut = subjective_cut
+#         self.best_dic = {}
+#
+#     def fit(self, x, y):
+#         """单变量训练."""
+#         if x.dropna().nunique() <= 1:
+#             # if verbose:
+#             #     print('nunique <= 1: {}, {}'.format(x.name, list(x.unique())))
+#             return self
+#         self.dep = y.name
+#         self.indep = x.name
+#         if issubclass(self.variable_type, (vtype.Summ, vtype.Count)):
+#             self.quantile = np.percentile(x.dropna(), [0, 25, 50, 75, 100]).tolist()
+#         else:
+#             self.quantile = []
+#         cut = self.subjective_cut
+#         cross, t_cut = gen_cross(x, y, cut, self.variable_type)
+#         detail, iv = calwoe(cross)
+#         woe = {key: val['WOE'] for key, val in detail.items() if key != -1}
+#         chi, p, dof, expFreq =\
+#             sps.chi2_contingency(
+#                     cross.loc[~cross.index.isin([-1]), :].values,
+#                     correction=False)
+#         var_entropy = sps.entropy(pd.Series(
+#             [val['all_num'] for key, val in detail.items()
+#              if key != -1]))
+#         shape = bad_rate_shape(cross, 0, 0)
+#         self.bin_dic = {0: {
+#             'detail': detail,
+#             'IV': iv,
+#             'flogp': -np.log(max(p, 1e-5)),
+#             'entropy': var_entropy,
+#             'shape': shape,
+#             'bin_cnt': len(cross)-1,
+#             'cut': cut,
+#             'WOE': woe,
+#             'describe': self.describe,
+#             'quantile': self.quantile}
+#             }
+#         self.best_dic = deepcopy(self.bin_dic)
+#         return self
+#
+#     def transform(self, x):
+#         """单变量应用."""
+#         trns = pd.DataFrame()
+#         for i in self.best_dic:
+#             shape = self.best_dic[i]['shape']
+#             bin_cnt = self.best_dic[i]['bin_cnt']
+#             cut = self.best_dic[i]['cut']
+#             woe = self.best_dic[i]['WOE']
+#             name = '_'.join([str(x.name), str(shape), str(bin_cnt)])
+#             x_trns = apply_woe(x, cut, woe, self.variable_type)
+#             x_trns.name = name
+#             trns = pd.concat([trns, x_trns], axis=1)
+#         return trns
+#
+#     def transform_bin(self, x):
+#         """单变量应用返回bin."""
+#         trns = pd.DataFrame()
+#         for i in self.best_dic:
+#             shape = self.best_dic[i]['shape']
+#             bin_cnt = self.best_dic[i]['bin_cnt']
+#             cut = self.best_dic[i]['cut']
+#             name = '_'.join([str(x.name), str(shape), str(bin_cnt)])
+#             x_trns = apply_cut_bin(x, cut, self.variable_type)
+#             x_trns.name = name
+#             trns = pd.concat([trns, x_trns], axis=1)
+#         return trns
+# =============================================================================

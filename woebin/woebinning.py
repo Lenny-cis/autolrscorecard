@@ -126,17 +126,14 @@ class ExploreWOEBinning:
     #     self.bin_dic = bins
     #     return self
 
-    def grid_search_best(self, verbose=True, bins_cnt=None,
-                         variable_shape=None,
-                         slc_mthd=None,
-                         tolerance=np.linspace(0.0, 0.1, 11).tolist(), **kwargs):
+    def grid_search_best(self, search_params={}, verbose=True, **kwargs):
         """网格选择特征全集最优分箱."""
         print('*'*40, 'GRID SEARCH', '*'*40)
         for key, val in self.bin_dic.items():
+            spms = deepcopy(kwargs)
+            spms.update(search_params.get(key, {}))
             x_binning = val
-            x_binning.grid_search_best(verbose=verbose, bins_cnt=bins_cnt,
-                                       variable_shape=variable_shape,
-                                       slc_mthd=slc_mthd, tolerance=tolerance)
+            x_binning.grid_search_best(verbose=verbose, **spms)
         return self
 
     def plot_best(self):
