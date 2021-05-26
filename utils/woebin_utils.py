@@ -13,7 +13,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from collections import defaultdict
 import warnings
-import variable_types.variable as vtype
+import autolrscorecard.variable_types.variable as vtype
 
 
 def make_tqdm_iterator(**kwargs):

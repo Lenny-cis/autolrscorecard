@@ -9,9 +9,11 @@ Created on Sun Jan 24 13:15:01 2021
 import numpy as np
 import pandas as pd
 from decimal import Decimal, getcontext
-import variable_types.variable as vtype
-from performance.withflag import gen_gaintable
-from plotfig.plotfig import plotROCKS, plotlift
+from copy import deepcopy
+from collections import OrderedDict
+import autolrscorecard.variable_types.variable as vtype
+from autolrscorecard.performance.withflag import gen_gaintable
+from autolrscorecard.plotfig import plotROCKS, plotlift
 
 getcontext().rounding = 'ROUND_HALF_UP'
 
@@ -21,13 +23,21 @@ class Entity:
 
     def __init__(self, id, df, target=None, variable_options=None):
         self.id = id
-        self.data = {'df': df, 'vops': variable_options, 'target': target}
+        self.data = {'df': df, 'vops': variable_options, 'target': target,
+                     'independents': df.columns.difference([target]).tolist(),
+                     'proba': None}
         self.target = target
-        # self.df = df
         self._create_variables(variable_options)
-        self.pipe_X = self.df.loc[:, self.variable_options.keys()].copy(deep=True)
+        self.pipe_X = self.df.loc[:, self.independents].copy(deep=True)
         if target:
             self.pipe_y = self.df.loc[:, self.target].copy(deep=True)
+        self.steps = OrderedDict({})
+
+    def update_data(self):
+        comm = self.pipe_X.columns
+        self.variable_options = {
+            k: v for k, v in self.variable_options.items() if k in comm}
+        return self
 
     def _create_variables(self, variable_options):
         variable_options = variable_options or {}
@@ -75,6 +85,24 @@ class Entity:
         self.data['target'] = tg
 
     @property
+    def proba(self):
+        """Target for the entity."""
+        return self.data['proba']
+
+    @proba.setter
+    def proba(self, tg):
+        self.data['proba'] = tg
+
+    @property
+    def independents(self):
+        """Independent for the entity."""
+        return self.data['independents']
+
+    @independents.setter
+    def independents(self, indeps):
+        self.data['independents'] = indeps
+
+    @property
     def variable_options(self):
         """Variable_options for the entity."""
         return self.data['vops']
@@ -83,16 +111,23 @@ class Entity:
     def variable_options(self, vops):
         self.data['vops'] = vops
 
+    def subentity(self, sub_id, cols):
+        obj = deepcopy(self)
+        obj.keep_variables(cols)
+        obj.update_data()
+        obj.id = sub_id
+        return obj
+
     def drop_variables(self, variables):
         """删除变量."""
-        cols = self.df.columns.intersection(list(variables))
-        self.df = self.df.drop(cols, axis=1)
+        cols = self.pipe_X.columns.intersection(list(variables))
+        self.pipe_X = self.pipe_X.drop(cols, axis=1)
         return self
 
     def keep_variables(self, variables):
         """保留变量."""
-        cols = self.df.columns.intersection(list(variables) + [self.target])
-        self.df = self.df.loc[:, cols]
+        cols = self.pipe_X.columns.intersection(list(variables))
+        self.pipe_X = self.pipe_X.loc[:, cols]
         return self
 
     @property
@@ -106,7 +141,6 @@ class Entity:
         gain_table = self.gain_table
         plotlift(gain_table, title='{} Lift'.format(self.id))
         return self
-
 
 def convert_all_variable_data(df, vartypes):
     """变量转换."""

@@ -10,8 +10,8 @@ import warnings
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_curve, auc
-from utils.validate import param_in_validate
-import variable_types.variable as vtype
+from autolrscorecard.utils.validate import param_in_validate
+import autolrscorecard.variable_types.variable as vtype
 
 
 def gen_cut_summ(ser, n=10, mthd='eqqt', precision=4):

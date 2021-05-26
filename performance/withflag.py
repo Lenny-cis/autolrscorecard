@@ -8,8 +8,8 @@ Created on Sun Jan 24 15:59:48 2021
 
 import numpy as np
 import pandas as pd
-from utils.performance_utils import (gen_cross, gen_cut, caliv, apply_woe,
-                                     calks, calauc)
+from autolrscorecard.utils.performance_utils import (
+    gen_cross, gen_cut, caliv, apply_woe, calks, calauc)
 
 
 def IV(ser, y, var_type):

@@ -8,9 +8,10 @@ Created on Mon Mar  1 10:52:24 2021
 
 import numpy as np
 import pandas as pd
-from utils.woebin_utils import make_tqdm_iterator
-from utils.performance_utils import caliv, gen_cut, apply_cut_bin
 from sklearn.model_selection import RepeatedKFold
+from autolrscorecard.utils.woebin_utils import make_tqdm_iterator
+from autolrscorecard.utils.performance_utils import(
+    caliv, gen_cut, apply_cut_bin)
 
 PBAR_FORMAT = "Elapsed: {elapsed} | Progress: {l_bar}{bar}"
 

@@ -10,17 +10,20 @@ import numpy as np
 import pandas as pd
 import matplotlib
 from matplotlib import pyplot as plt
+import seaborn as sns
 from IPython import get_ipython
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc
-from utils.performance_utils import gen_ksseries, gen_cut, gen_cross
-from utils.woebin_utils import cut_to_interval
+from autolrscorecard.utils.performance_utils import (
+    gen_ksseries, gen_cut, gen_cross)
+from autolrscorecard.utils.woebin_utils import cut_to_interval
 
 # matplotlib.use('agg')
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 300
-get_ipython().run_line_magic('matplotlib', 'inline')
+# get_ipython().run_line_magic('matplotlib', 'inline')
+
 
 def plotROCKS(y, pred, ks_label='MODEL', pos_label=None):
     """画ROC曲线及KS曲线."""
@@ -70,6 +73,66 @@ def plotROCKS(y, pred, ks_label='MODEL', pos_label=None):
     return fig
 
 
+def plotROC(y, pred, title='MODEL', pos_label=None):
+    """画ROC曲线及KS曲线."""
+    # 调整主次坐标轴
+    xmajorLocator = matplotlib.ticker.MaxNLocator(6)
+    xminorLocator = matplotlib.ticker.MaxNLocator(11)
+    fpr, tpr, thrd = roc_curve(y, pred, pos_label=pos_label)
+    ks_stp, w, ksTile = gen_ksseries(y, pred)
+    auc_stp = auc(fpr, tpr)
+    ks_x = fpr[w.argmax()]
+    ks_y = tpr[w.argmax()]
+    fig, ax = plt.subplots()
+    # 画ROC曲线
+    ax.set_title(title + ' ROC')
+    ax.plot(fpr, tpr, 'r-', label='AUC=%.5f' % auc_stp, linewidth=0.5)
+    ax.plot([0, 1], [0, 1], '-', color=(0.6, 0.6, 0.6), linewidth=0.5)
+    ax.plot([ks_x, ks_x], [ks_x, ks_y], 'r--', linewidth=0.5)
+    ax.text(ks_x, (ks_x+ks_y)/2, '  KS=%.5f' % ks_stp)
+    ax.set(xlim=(0, 1), ylim=(0, 1), xlabel='FPR', ylabel='TPR')
+    ax.xaxis.set_major_locator(xmajorLocator)
+    ax.xaxis.set_minor_locator(xminorLocator)
+    ax.yaxis.set_minor_locator(xminorLocator)
+    ax.fill_between(fpr, tpr, color='red', alpha=0.1)
+    ax.legend()
+    ax.grid(alpha=0.5, which='minor')
+    return fig
+
+
+def plotKS(y, pred, title='MODEL', pos_label=None):
+    """画ROC曲线及KS曲线."""
+    # 调整主次坐标轴
+    xmajorLocator = matplotlib.ticker.MaxNLocator(6)
+    xminorLocator = matplotlib.ticker.MaxNLocator(11)
+    fpr, tpr, thrd = roc_curve(y, pred, pos_label=pos_label)
+    ks_stp, w, ksTile = gen_ksseries(y, pred)
+    ks_x = fpr[w.argmax()]
+    ks_y = tpr[w.argmax()]
+    fig, ax = plt.subplots()
+    # 画KS曲线
+    ax.set_title(title + ' KS')
+    allNum = len(y)
+    eventNum = np.sum(y)
+    nonEventNum = allNum - eventNum
+    ks_p_x = (eventNum*ks_y + nonEventNum*ks_x)/allNum
+    ax.plot(ksTile, w, 'r-', linewidth=0.5)
+    ax.plot(ksTile, fpr, '-', color=(0.6, 0.6, 0.6),
+            label='Good', linewidth=0.5)
+    ax.text(ks_p_x, ks_y+0.05, 'Bad', color=(0.6, 0.6, 0.6))
+    ax.plot(ksTile, tpr, '-', color=(0.6, 0.6, 0.6),
+            label='Bad', linewidth=0.5)
+    ax.text(ks_p_x, ks_x-0.05, 'Good', color=(0.6, 0.6, 0.6))
+    ax.plot([ks_p_x, ks_p_x], [ks_stp, 0], 'r--', linewidth=0.5)
+    ax.text(ks_p_x, ks_stp/2, '  KS=%.5f' % ks_stp)
+    ax.set(xlim=(0, 1), ylim=(0, 1), xlabel='Prop', ylabel='TPR/FPR')
+    ax.xaxis.set_major_locator(xmajorLocator)
+    ax.xaxis.set_minor_locator(xminorLocator)
+    ax.yaxis.set_minor_locator(xminorLocator)
+    ax.grid(alpha=0.5, which='minor')
+    return fig
+
+
 def plotlift(df, title):
     """画提升图."""
     f, ax = plt.subplots(figsize=(12, 9), tight_layout=True)
@@ -83,16 +146,26 @@ def plotlift(df, title):
     plt.show()
 
 
+def plotdist(score, title):
+    """画分布图."""
+    f, ax = plt.subplots(figsize=(12, 9), tight_layout=True)
+    ax = sns.distplot(score, kde=True, bins=20)
+    ax.set_title(title)
+    plt.show()
+
+
 def plot_bin(details):
     """画分箱图."""
     _ = plt.figure(tight_layout=True)
     for x in details.loc[:, 'var'].unique():
         detail = details.loc[details.loc[:, 'var'] == x, :]
         xticklabels = detail.loc[:, 'Bound']
-        ax1 = sns.barplot(list(range(len(xticklabels))), detail.loc[:, 'all_num'], label='Num')
+        ax1 = sns.barplot(list(range(len(xticklabels))),
+                          detail.loc[:, 'all_num'], label='Num')
         plt.xlabel(detail.loc[:, 'describe'].iloc[0])
         ax2 = ax1.twinx()
-        ax2 = sns.lineplot(list(range(len(xticklabels))), detail.loc[:, 'WOE'], color='r', label='WOE')
+        ax2 = sns.lineplot(list(range(len(xticklabels))),
+                           detail.loc[:, 'WOE'], color='r', label='WOE')
         h1, l1 = ax1.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()
         hlist = h1 + h2

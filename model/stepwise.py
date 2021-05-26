@@ -17,14 +17,11 @@ def stepwise_selection(X, y,
         changed=False
         # forward step
         excluded = list(set(X.columns)-set(included))
-        print(excluded)
         new_pval = pd.Series(index=excluded)
-        print(new_pval)
         for new_column in excluded:
-            model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[included+[new_column]]))).fit()
+            model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[included+[new_column]]))).fit(disp=False)
             new_pval[new_column] = model.pvalues[new_column]
         best_pval = new_pval.min()
-        print(best_pval)
         if best_pval < threshold_in:
             best_feature = new_pval.idxmin()
             included.append(best_feature)
@@ -33,7 +30,7 @@ def stepwise_selection(X, y,
                 print('Add  {:30} with p-value {:.6}'.format(best_feature, best_pval))
 
         # backward step
-        model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[included]))).fit()
+        model = sm.Logit(y, sm.add_constant(pd.DataFrame(X[included]))).fit(disp=False)
         # use all coefs except intercept
         pvalues = model.pvalues.iloc[1:]
         worst_pval = pvalues.max() # null if pvalues is empty

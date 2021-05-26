@@ -8,7 +8,7 @@ Created on Sun Jan 24 13:29:57 2021
 
 import numpy as np
 import pandas as pd
-from utils.performance_utils import caliv
+from autolrscorecard.utils.performance_utils import caliv
 
 
 def missing_ratio(ser):
