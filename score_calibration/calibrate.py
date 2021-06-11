@@ -47,11 +47,12 @@ class Calibrator:
             detail.loc[:, 'Bound'] = pd.Series(cut_str)
             detail.loc[:, 'var'] = x
             detail.loc[:, 'describe'] = dic.get('describe', '未知')
+            detail.loc[:, 'WOE'] = detail.loc[:, 'WOE'] * coef_mapping[x]\
+                + n_const
             detail = detail.loc[:, [
                 'var', 'describe', 'Bound',
                 'all_num', 'event_num', 'event_rate', 'WOE']]
             df = pd.concat([df, detail])
-        df.loc[:, 'WOE'] = df.loc[:, 'WOE'] * coef_mapping[x] + n_const
         df.rename(columns={'WOE': 'BIN_SCORE'}, inplace=True)
         w_ = df.groupby('var')['BIN_SCORE'].agg(lambda x: x.max() - x.min())
         w_ = w_ / w_.sum() * 100

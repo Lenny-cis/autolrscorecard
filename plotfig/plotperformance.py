@@ -149,7 +149,7 @@ def plotlift(df, title):
 def plotdist(score, title):
     """画分布图."""
     f, ax = plt.subplots(figsize=(12, 9), tight_layout=True)
-    ax = sns.distplot(score, kde=True, bins=20)
+    ax = sns.distplot(score, kde=True)
     ax.set_title(title)
     plt.show()
 
