@@ -22,3 +22,5 @@ job_server.get_ncpus()
 sum_pppp = [job_server.submit(func=sum_rand, args=(i,)) for i in range(10)]
 for job in sum_pppp:
     print(job())
+
+print(1)
