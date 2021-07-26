@@ -26,7 +26,7 @@ from autolrscorecard.plotfig import plot_bin
 PBAR_FORMAT = "Possible: {total} | Elapsed: {elapsed} | Progress: {l_bar}{bar}"
 
 
-class ExploreVarBinning:
+class VarBinning:
     """探索性分箱."""
 
     def __init__(self, cut_cnt=50, thrd_PCT=0.025, thrd_n=None, verbose=True,
@@ -116,6 +116,35 @@ class ExploreVarBinning:
             woe_ = woe_.loc[woe_.index != -1]
             return np.min(np.abs(woe_ - woe_.shift()))
 
+        def _gen_merged_bin(cross, merge_idxs):
+            # 根据选取的切点合并列联表
+            merged = merge_bin_by_idx(cross, bin_idxs)
+            shape = bad_rate_shape(merged, self.I_min, self.U_min)
+            # badrate的形状符合先验形状的分箱方式保留下来
+            if pd.isna(shape) or shape not in self.variable_shape:
+                return
+            detail, iv = calwoe(merged)
+            woe = {key: val['WOE'] for key, val in detail.items()}
+            tol = _caltol(woe)
+            if tol <= self.tolerance:
+                return
+            chi, p, dof, expFreq =\
+                sps.chi2_contingency(
+                        merged.loc[~merged.index.isin([-1]), :].values,
+                        correction=False)
+            var_entropy = sps.entropy(pd.Series(
+                [val['all_num'] for key, val in detail.items()
+                 if key != -1]))
+            new_cut = cut_adj(cut, bin_idxs, self.variable_type)
+            ptp_ = _ptp(new_cut, self.quantile)
+            var_bin_ = {
+                'detail': detail, 'IV': iv, 'flogp': -np.log(max(p, 1e-5)),
+                'entropy': var_entropy, 'shape': shape,
+                'bin_cnt': len(merged)-1, 'cut': new_cut, 'WOE': woe,
+                'tolerance': tol, 'minptp': ptp_
+                }
+            return var_bin_
+
         cross = crs.copy(deep=True)
         min_I = self.I_min - 1
         min_U = self.U_min - 1
@@ -136,51 +165,21 @@ class ExploreVarBinning:
         loops_ = range(min_cut_loops_cnt, max_cut_loops_cnt)
         bcs = [bi for loop in loops_
                for bi in its.combinations(cut_point_list, loop)]
-        if len(bcs) > 0:
-            tqdm_options = {'bar_format': PBAR_FORMAT,
-                            'total': len(bcs),
-                            'desc': self.indep,
-                            'disable': True}
-            if verbose:
-                tqdm_options.update({'disable': False})
-            with make_tqdm_iterator(**tqdm_options) as progress_bar:
-                for bin_idxs in bcs:
-                    # 根据选取的切点合并列联表
-                    merged = merge_bin_by_idx(cross, bin_idxs)
-                    shape = bad_rate_shape(merged, self.I_min, self.U_min)
-                    # badrate的形状符合先验形状的分箱方式保留下来
-                    if pd.isna(shape) or shape not in self.variable_shape:
-                        progress_bar.update()
-                        continue
-                    detail, iv = calwoe(merged)
-                    woe = {key: val['WOE'] for key, val in detail.items()}
-                    tol = _caltol(woe)
-                    if tol <= self.tolerance:
-                        progress_bar.update()
-                        continue
-                    var_bin_dic[s] = {}
-                    chi, p, dof, expFreq =\
-                        sps.chi2_contingency(
-                                merged.loc[~merged.index.isin([-1]), :].values,
-                                correction=False)
-                    var_entropy = sps.entropy(pd.Series(
-                        [val['all_num'] for key, val in detail.items()
-                         if key != -1]))
-                    new_cut = cut_adj(cut, bin_idxs, self.variable_type)
-                    ptp_ = _ptp(new_cut, self.quantile)
-                    var_bin_dic[s] = {
-                        'detail': detail,
-                        'IV': iv,
-                        'flogp': -np.log(max(p, 1e-5)),
-                        'entropy': var_entropy,
-                        'shape': shape,
-                        'bin_cnt': len(merged)-1,
-                        'cut': new_cut,
-                        'WOE': woe,
-                        'tolerance': tol,
-                        'minptp': ptp_}
-                    s += 1
-                    progress_bar.update()
+        if len(bcs) <= 0:
+            return var_bin_dic
+        tqdm_options = {'bar_format': PBAR_FORMAT,
+                        'total': len(bcs),
+                        'desc': self.indep,
+                        'disable': True}
+        if verbose:
+            tqdm_options.update({'disable': False})
+        with make_tqdm_iterator(**tqdm_options) as progress_bar:
+            for bin_idxs in bcs:
+                temp_bin = _gen_merged_bin(cross, bin_idxs)
+                if temp_bin is not None:
+                    var_bin_dic[s] = temp_bin
+                s += 1
+                progress_bar.update()
         return var_bin_dic
 
     def fit(self, x, y):
