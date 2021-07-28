@@ -6,6 +6,7 @@ Created on Sun Jan 24 16:39:10 2021
 """
 
 
+import ray
 import pandas as pd
 import numpy as np
 import itertools as its
@@ -21,11 +22,10 @@ from autolrscorecard.utils.woebin_utils import (
     merge_lowpct_zero, make_tqdm_iterator, merge_bin_by_idx, bad_rate_shape,
     cut_adj, calwoe, cut_to_interval)
 from autolrscorecard.plotfig import plot_bin
+from autolrscorecard.utils.progress_bar import ProgressBar
 
 
-PBAR_FORMAT = "Possible: {total} | Elapsed: {elapsed} | Progress: {l_bar}{bar}"
-
-
+@ray.remote
 class VarBinning:
     """探索性分箱."""
 
@@ -61,6 +61,10 @@ class VarBinning:
     def bins_set(self, bs):
         """分箱集合."""
         self.data['bins_set'] = bs
+
+    def get_bins_set(self):
+        """分箱集合."""
+        return self.data['bins_set']
 
     @property
     def best_bins(self):
@@ -116,9 +120,9 @@ class VarBinning:
             woe_ = woe_.loc[woe_.index != -1]
             return np.min(np.abs(woe_ - woe_.shift()))
 
-        def _gen_merged_bin(cross, merge_idxs):
+        def _gen_merged_bin(cross, merge_idxs, pba):
             # 根据选取的切点合并列联表
-            merged = merge_bin_by_idx(cross, bin_idxs)
+            merged = merge_bin_by_idx(cross, merge_idxs)
             shape = bad_rate_shape(merged, self.I_min, self.U_min)
             # badrate的形状符合先验形状的分箱方式保留下来
             if pd.isna(shape) or shape not in self.variable_shape:
@@ -135,7 +139,7 @@ class VarBinning:
             var_entropy = sps.entropy(pd.Series(
                 [val['all_num'] for key, val in detail.items()
                  if key != -1]))
-            new_cut = cut_adj(cut, bin_idxs, self.variable_type)
+            new_cut = cut_adj(cut, merge_idxs, self.variable_type)
             ptp_ = _ptp(new_cut, self.quantile)
             var_bin_ = {
                 'detail': detail, 'IV': iv, 'flogp': -np.log(max(p, 1e-5)),
@@ -143,6 +147,7 @@ class VarBinning:
                 'bin_cnt': len(merged)-1, 'cut': new_cut, 'WOE': woe,
                 'tolerance': tol, 'minptp': ptp_
                 }
+            pba.update.remote(1)
             return var_bin_
 
         cross = crs.copy(deep=True)
@@ -165,30 +170,26 @@ class VarBinning:
         loops_ = range(min_cut_loops_cnt, max_cut_loops_cnt)
         bcs = [bi for loop in loops_
                for bi in its.combinations(cut_point_list, loop)]
-        if len(bcs) <= 0:
+        lbcs = len(bcs)
+        if lbcs <= 0:
             return var_bin_dic
-        tqdm_options = {'bar_format': PBAR_FORMAT,
-                        'total': len(bcs),
-                        'desc': self.indep,
-                        'disable': True}
-        if verbose:
-            tqdm_options.update({'disable': False})
-        with make_tqdm_iterator(**tqdm_options) as progress_bar:
-            for bin_idxs in bcs:
-                temp_bin = _gen_merged_bin(cross, bin_idxs)
-                if temp_bin is not None:
-                    var_bin_dic[s] = temp_bin
-                s += 1
-                progress_bar.update()
+        tqdm_options = {'total': lbcs, 'description': self.indep}
+        pb = ProgressBar(**tqdm_options)
+        actor = pb.actor
+
+        refs = [_gen_merged_bin.remote(cross, bin_idxs, actor)
+                for bin_idxs in bcs]
+        unfinished = refs
+        while unfinished:
+            finished, unfinished = ray.wait(unfinished, num_returns=1)
+            var_bin_dic[s] = ray.get(finished)
+            s += 1
         return var_bin_dic
 
     def fit(self, x, y):
         """单变量训练."""
         verbose = self.verbose
         if x.dropna().nunique() <= 1:
-            # if verbose:
-            #     print('nunique <= 1: {}, {}'.format(
-            #           x.name, list(x.unique())))
             return self
         self.dep = y.name
         self.indep = x.name
@@ -278,8 +279,7 @@ class VarBinning:
         prod_ = list(product(bins_cnt, variable_shape, slc_mthd, tolerance))
         if len(prod_) <= 0:
             return self
-        tqdm_options = {'bar_format': PBAR_FORMAT,
-                        'total': len(prod_),
+        tqdm_options = {'total': len(prod_),
                         'desc': self.indep,
                         'disable': True}
         if self.verbose:
@@ -358,7 +358,7 @@ class VarBinning:
         return obj
 
 
-class VarBinning:
+class VarBinning2:
     """单个变量分箱.
 
     Input_

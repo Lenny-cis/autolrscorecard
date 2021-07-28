@@ -7,12 +7,13 @@ Created on Sun Jan 24 15:23:33 2021
 
 
 import sys
+import warnings
 import numpy as np
 import pandas as pd
+import scipy.stats as sps
 from tqdm import tqdm
 from copy import deepcopy
 from collections import defaultdict
-import warnings
 import autolrscorecard.variable_types.variable as vtype
 
 
@@ -61,15 +62,15 @@ def is_shape_A(self, values):
     return False
 
 
-def gen_badrate(df):
+def gen_badrate(arr):
     """输入bin和[0, 1]的列联表，生成badrate."""
-    return df.values[:, 1]/df.values.sum(axis=1)
+    return arr[:, 1]/arr.sum(axis=1)
 
 
-def bad_rate_shape(df, I_min, U_min):
+def arr_badrate_shape(arr, I_min, U_min):
     """判断badrate的单调性，限制了单调的最小个数，U形的最小个数."""
-    n = len(df)
-    badRate = gen_badrate(df[df.index != -1])
+    n = len(arr)
+    badRate = gen_badrate(arr)
     if (n >= I_min):
         if is_shape_I(badRate):
             return 'I'
@@ -110,6 +111,49 @@ def cut_adj(cut, bin_idxs, variable_type):
     return t_cut
 
 
+def merge_arr_by_idx(arr, idxlist):
+    """
+    合并分箱，返回合并后的列联表和切点，合并过程中不会改变缺失组，向下合并的方式.
+
+    input
+        arr         bin和[0, 1]的列联表
+        idxlist     需要合并的箱的索引，列表格式
+    """
+    arr = arr.copy()
+    # 倒序循环需合并的列表，正序会导致表索引改变，合并出错
+    for idx in idxlist[::-1]:
+        arr[idx] = arr[idx-1: idx+1].sum(axis=0)
+        arr = np.delete(arr, idx-1, axis=0)
+    return arr
+
+
+def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
+                   tolerance):
+    # 根据选取的切点合并列联表
+    merged_arr = merge_arr_by_idx(arr, merge_idxs)
+    shape = arr_badrate_shape(merged_arr, I_min, U_min)
+    # badrate的形状符合先验形状的分箱方式保留下来
+    if pd.isna(shape) or (shape not in variable_shape):
+        return
+    detail = calwoe(merged_arr, arr_na)
+    woe = detail['WOE']
+    tol = caltol(woe)
+    if tol <= tolerance:
+        return
+    chi, p, dof, expFreq =\
+        sps.chi2_contingency(merged_arr, correction=False)
+    var_entropy = sps.entropy(detail['all_num'][:-1])
+    var_bin_ = {
+        'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
+        'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr)
+        }
+    return var_bin_
+
+
+def caltol(woes):
+    woe_ = woes.copy()[:-1]
+    return np.min(np.abs(woe_[1:] - woe_[:-1]))
+
 def merge_bin_by_idx(crs, idxlist):
     """
     合并分箱，返回合并后的列联表和切点，合并过程中不会改变缺失组，向下合并的方式.
@@ -127,7 +171,6 @@ def merge_bin_by_idx(crs, idxlist):
     cross = pd.DataFrame(cross, columns=cols)\
         .append(crs[crs.index == -1])
     return cross
-
 
 def merge_lowpct_zero(df, cut, variable_type, thrd_PCT=0.05, thrd_n=None, mthd='PCT'):
     """
@@ -187,32 +230,60 @@ def merge_lowpct_zero(df, cut, variable_type, thrd_PCT=0.05, thrd_n=None, mthd='
     return cross.append(df[df.index == -1]), t_cut
 
 
-def calwoe(df, modify=True):
+def calwoe(arr, arr_na, modify=True):
     """计算WOE、IV及分箱细节."""
     warnings.filterwarnings('ignore')
-    cross = df.values
-    col_margin = cross.sum(axis=0)
-    row_margin = cross.sum(axis=1)
-    event_rate = cross[:, 1] / row_margin
-    event_prop = cross[:, 1] / col_margin[1]
-    non_event_prop = cross[:, 0] / col_margin[0]
+    arr = np.append(arr, arr_na, axis=0)
+    col_margin = arr.sum(axis=0)
+    row_margin = arr.sum(axis=1)
+    event_rate = arr[:, 1] / row_margin
+    event_prop = arr[:, 1] / col_margin[1]
+    non_event_prop = arr[:, 0] / col_margin[0]
     # 将0替换为极小值，便于计算，计算后将rate为0的组赋值为其他组的最小值，
     # rate为1的组赋值为其他组的最大值
     WOE = np.log(np.where(event_prop == 0, 1e-5, event_prop)
                  / np.where(non_event_prop == 0, 1e-5, non_event_prop))
-    WOE[event_rate == 0] = np.min(WOE[(event_rate != 0) & (df.index != -1)])
-    WOE[event_rate == 1] = np.max(WOE[(event_rate != 1) & (df.index != -1)])
+    WOE[event_rate == 0] = np.min(WOE[:-1][event_rate != 0])
+    WOE[event_rate == 1] = np.max(WOE[:-1][event_rate != 1])
     # 调整缺失组的WOE
     if modify is True:
-        if WOE[df.index == -1] == max(WOE):
-            WOE[df.index == -1] = max(WOE[df.index != -1])
-        elif WOE[df.index == -1] == min(WOE):
-            WOE[df.index == -1] = 0
-    iv = (event_prop-non_event_prop)*WOE
+        if WOE[-1] == max(WOE):
+            WOE[-1] = max(WOE[:-1])
+        elif WOE[-1] == min(WOE):
+            WOE[-1] = 0
+    iv = (event_prop - non_event_prop) * WOE
     warnings.filterwarnings('default')
-    return pd.DataFrame({'all_num': row_margin, 'event_rate': event_rate,
-                         'event_num': cross[:, 1], 'WOE': WOE.round(4), 'IV': iv},
-                        index=df.index).to_dict(orient='index'), iv.sum()
+    return {'all_num': row_margin, 'event_rate': event_rate, 'IV': iv,
+            'event_num': arr[:, 1], 'WOE': WOE.round(4), 'SUMIV': iv.sum()}
+
+
+# def calwoe(df, modify=True):
+#     """计算WOE、IV及分箱细节."""
+#     warnings.filterwarnings('ignore')
+#     cross = df.values
+#     col_margin = cross.sum(axis=0)
+#     row_margin = cross.sum(axis=1)
+#     event_rate = cross[:, 1] / row_margin
+#     event_prop = cross[:, 1] / col_margin[1]
+#     non_event_prop = cross[:, 0] / col_margin[0]
+#     # 将0替换为极小值，便于计算，计算后将rate为0的组赋值为其他组的最小值，
+#     # rate为1的组赋值为其他组的最大值
+#     WOE = np.log(np.where(event_prop == 0, 1e-5, event_prop)
+#                  / np.where(non_event_prop == 0, 1e-5, non_event_prop))
+#     WOE[event_rate == 0] = np.min(WOE[(event_rate != 0) & (df.index != -1)])
+#     WOE[event_rate == 1] = np.max(WOE[(event_rate != 1) & (df.index != -1)])
+#     # 调整缺失组的WOE
+#     if modify is True:
+#         if WOE[df.index == -1] == max(WOE):
+#             WOE[df.index == -1] = max(WOE[df.index != -1])
+#         elif WOE[df.index == -1] == min(WOE):
+#             WOE[df.index == -1] = 0
+#     iv = (event_prop-non_event_prop)*WOE
+#     warnings.filterwarnings('default')
+#     return pd.DataFrame({'all_num': row_margin, 'event_rate': event_rate,
+#                          'event_num': cross[:, 1], 'WOE': WOE.round(4), 'IV': iv},
+#                         index=df.index).to_dict(orient='index'), iv.sum()
+
 
 
 def cut_to_interval(cut, variable_type):
