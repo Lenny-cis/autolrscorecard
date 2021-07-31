@@ -30,6 +30,8 @@ def make_tqdm_iterator(**kwargs):
 
 def is_shape_I(values):
     """判断输入的列表/序列是否为单调递增."""
+    if len(values) < 2:
+        return False
     if np.array([values[i] < values[i+1]
                 for i in range(len(values)-1)]).all():
         return True
@@ -38,6 +40,8 @@ def is_shape_I(values):
 
 def is_shape_D(values):
     """判断输入的列表/序列是否为单调递减."""
+    if len(values) < 2:
+        return False
     if np.array([values[i] > values[i+1]
                 for i in range(len(values)-1)]).all():
         return True
@@ -46,6 +50,8 @@ def is_shape_D(values):
 
 def is_shape_U(values):
     """判断输入的列表/序列是否为先单调递减后单调递增."""
+    if len(values) < 3:
+        return False
     if not (is_shape_I(values) and is_shape_D(values)):
         knee = np.argmin(values)
         if is_shape_D(values[: knee+1]) and is_shape_I(values[knee:]):
@@ -55,6 +61,8 @@ def is_shape_U(values):
 
 def is_shape_A(self, values):
     """判断输入的列表/序列是否为先单调递增后单调递减."""
+    if len(values) < 3:
+        return False
     if not (is_shape_I(values) and is_shape_D(values)):
         knee = np.argmax(values)
         if is_shape_I(values[: knee+1]) and is_shape_D(values[knee:]):
@@ -67,18 +75,15 @@ def gen_badrate(arr):
     return arr[:, 1]/arr.sum(axis=1)
 
 
-def arr_badrate_shape(arr, I_min, U_min):
-    """判断badrate的单调性，限制了单调的最小个数，U形的最小个数."""
-    n = len(arr)
+def arr_badrate_shape(arr):
+    """判断badrate的单调性."""
     badRate = gen_badrate(arr)
-    if (n >= I_min):
-        if is_shape_I(badRate):
-            return 'I'
-        elif is_shape_D(badRate):
-            return 'D'
-    if (n >= U_min):
-        if is_shape_U(badRate):
-            return 'U'
+    if is_shape_I(badRate):
+        return 'I'
+    elif is_shape_D(badRate):
+        return 'D'
+    elif is_shape_U(badRate):
+        return 'U'
     return np.nan
 
 
@@ -87,6 +92,7 @@ def slc_min_dist(df):
     选取最小距离.
 
     计算上下两个bin之间的距离，计算原理参考用惯量类比距离的wald法聚类计算方式
+    返回需要被合并的箱号
     """
     R_margin = df.sum(axis=1)
     C_margin = df.sum(axis=0)
@@ -113,8 +119,9 @@ def cut_adj(cut, bin_idxs, variable_type):
 
 def merge_arr_by_idx(arr, idxlist):
     """
-    合并分箱，返回合并后的列联表和切点，合并过程中不会改变缺失组，向下合并的方式.
+    合并分箱，返回合并后的数组，向下合并的方式.
 
+    不含缺失组
     input
         arr         bin和[0, 1]的列联表
         idxlist     需要合并的箱的索引，列表格式
@@ -129,6 +136,7 @@ def merge_arr_by_idx(arr, idxlist):
 
 def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
                    tolerance):
+    """生成合并结果."""
     # 根据选取的切点合并列联表
     merged_arr = merge_arr_by_idx(arr, merge_idxs)
     shape = arr_badrate_shape(merged_arr, I_min, U_min)
@@ -136,8 +144,8 @@ def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     if pd.isna(shape) or (shape not in variable_shape):
         return
     detail = calwoe(merged_arr, arr_na)
-    woe = detail['WOE']
-    tol = caltol(woe)
+    woes = detail['WOE']
+    tol = cal_min_tol(woes[:-1])
     if tol <= tolerance:
         return
     chi, p, dof, expFreq =\
@@ -150,9 +158,11 @@ def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     return var_bin_
 
 
-def caltol(woes):
-    woe_ = woes.copy()[:-1]
-    return np.min(np.abs(woe_[1:] - woe_[:-1]))
+def cal_min_tol(arr):
+    """计算woe的最小差值."""
+    arr_ = arr.copy()
+    return np.min(np.abs(arr_[1:] - arr_[:-1]))
+
 
 def merge_bin_by_idx(crs, idxlist):
     """
@@ -172,7 +182,9 @@ def merge_bin_by_idx(crs, idxlist):
         .append(crs[crs.index == -1])
     return cross
 
-def merge_lowpct_zero(df, cut, variable_type, thrd_PCT=0.05, thrd_n=None, mthd='PCT'):
+
+def merge_lowpct_zero(df, cut, variable_type, thrd_PCT=0.05, thrd_n=None,
+                      mthd='PCT'):
     """
     合并个数为0和占比过低的箱，不改变缺失组的结果.
 
@@ -243,8 +255,8 @@ def calwoe(arr, arr_na, modify=True):
     # rate为1的组赋值为其他组的最大值
     WOE = np.log(np.where(event_prop == 0, 1e-5, event_prop)
                  / np.where(non_event_prop == 0, 1e-5, non_event_prop))
-    WOE[event_rate == 0] = np.min(WOE[:-1][event_rate != 0])
-    WOE[event_rate == 1] = np.max(WOE[:-1][event_rate != 1])
+    WOE[event_rate == 0] = np.min(WOE[:-1][event_rate[:-1] != 0])
+    WOE[event_rate == 1] = np.max(WOE[:-1][event_rate[:-1] != 1])
     # 调整缺失组的WOE
     if modify is True:
         if WOE[-1] == max(WOE):
