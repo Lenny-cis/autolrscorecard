@@ -14,6 +14,7 @@ import scipy.stats as sps
 from tqdm import tqdm
 from copy import deepcopy
 from collections import defaultdict
+from functools import reduce
 import autolrscorecard.variable_types.variable as vtype
 
 
@@ -117,21 +118,58 @@ def cut_adj(cut, bin_idxs, variable_type):
     return t_cut
 
 
+def bagging_indices(arr_idxs, idxlist):
+    """
+    数组索引根据隔板号入袋.
+
+    Parameters
+    ----------
+    arr_idxs: list
+        列表型索引
+    idxlist: list
+        arr_idxs的隔板号,1 to len(arr_idxs) - 1
+    """
+    def bagging(x, y):
+        if isinstance(x[y], list):
+            return x[: y - 1] + [[x[y - 1]] + x[y]] + x[y + 1:]
+        return x[: y - 1] + [x[y - 1: y + 1]] + x[y + 1:]
+    # 倒序循环需合并的列表，正序会导致表索引改变，合并出错
+    return reduce(bagging, [arr_idxs] + sorted(idxlist, reverse=True))
+
+
+def merge_arr_by_baggedidx(arr, bagged_idxs):
+    """
+    根据入袋的索引号合并数组.
+
+    Parameters
+    ----------
+    arr: np.array
+        bin和[0, 1]的数组
+    bagged_idxs: list
+        已入袋的索引，嵌套列表[[], num, [], num]
+    """
+    def a1(x):
+        if isinstance(x, list):
+            return arr[x].sum(axis=0)
+        return arr[x]
+
+    return np.array(list(map(a1, bagged_idxs)))
+
+
 def merge_arr_by_idx(arr, idxlist):
     """
-    合并分箱，返回合并后的数组，向下合并的方式.
+    根据隔板号合并分箱，返回合并后的数组.
 
     不含缺失组
-    input
-        arr         bin和[0, 1]的列联表
-        idxlist     需要合并的箱的索引，列表格式
+    Parameters
+    ----------
+    arr: np.array
+        bin和[0, 1]的数组
+    idxlist: list
+        需要被合并的箱的隔板号,1 to len(arr) - 1
     """
-    arr = arr.copy()
-    # 倒序循环需合并的列表，正序会导致表索引改变，合并出错
-    for idx in idxlist[::-1]:
-        arr[idx] = arr[idx-1: idx+1].sum(axis=0)
-        arr = np.delete(arr, idx-1, axis=0)
-    return arr
+    bidxs = bagging_indices(list(range(arr.shape[0])), idxlist)
+    return merge_arr_by_baggedidx(arr, bidxs)
 
 
 def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,

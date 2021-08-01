@@ -15,7 +15,7 @@ from autolrscorecard.utils.woebin_utils import merge_arr_by_idx
 arr = np.array([[9000, 16000, 21000, 24000, 25000, 20000],
                 [1000, 4000, 9000, 16000, 25000, 30000]]).T
 arr_na = np.array([[3000, 500]])
-
+arr = np.append(arr, arr, axis=0)
 a = merge_arr_by_idx(arr, [1])
-a2 = merge_arr_by_idx(arr, [1, 3])
+a2 = merge_arr_by_idx(arr, [1, 2, 4])
 a3 = merge_arr_by_idx(arr, [2])
