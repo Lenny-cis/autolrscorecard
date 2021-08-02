@@ -17,4 +17,5 @@ arr = np.array([[9000, 16000, 21000, 24000, 30010, 20000],
                 [1000, 4000, 9000, 16000, 19990, 30000]]).T
 arr_na = np.array([[3000, 500]])
 
-a = slc_min_dist(pd.DataFrame(arr, columns=[0, 1]))
+print(arr[:, 1]/arr.sum(axis=1))
+a = slc_min_dist(arr)

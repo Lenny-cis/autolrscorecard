@@ -88,34 +88,33 @@ def arr_badrate_shape(arr):
     return np.nan
 
 
-def slc_min_dist(df):
+def slc_min_dist(arr):
     """
     选取最小距离.
 
     计算上下两个bin之间的距离，计算原理参考用惯量类比距离的wald法聚类计算方式
     返回需要被合并的箱号
     """
-    R_margin = df.sum(axis=1)
-    C_margin = df.sum(axis=0)
-    n = df.sum().sum()
-    A = df.div(R_margin, axis=0)
+    R_margin = arr.sum(axis=1, keepdims=True)
+    C_margin = arr.sum(axis=0, keepdims=True)
+    n = arr.sum()
+    A = np.divide(arr, R_margin)
     R = R_margin/n
     C = C_margin/n
     # 惯量类比距离
-    dist = (A-A.shift()).dropna().applymap(np.square)\
-        .div(C, axis=1).sum(axis=1)*(R*R.shift()/(R+R.shift())).dropna()
-    return dist.idxmin()
+    dist = np.divide(np.square(A[1:]-A[:-1]), C).sum(axis=1, keepdims=True)\
+        / (1/R[1:]+1/R[:-1])
+    return dist.argmin() + 1
 
 
-def cut_adj(cut, bin_idxs, variable_type):
+def cut_adjust(cut, bin_idxs):
     """切分点调整."""
-    if not issubclass(variable_type, (vtype.Discrete, pd.CategoricalDtype)):
+    def cut_dict_adjust(cut_dict, idx):
+        return {k: v-1 if v >= idx else v for k, v in cut_dict.items()}
+
+    if isinstance(cut, list):
         return [x for i, x in enumerate(cut) if i not in bin_idxs]
-    t_cut = deepcopy(cut)
-    for idx in bin_idxs[::-1]:
-        t_d = {k: v-1 for k, v in t_cut.items() if v >= idx}
-        t_cut.update(t_d)
-    return t_cut
+    return reduce(cut_dict_adjust, [cut] + sorted(bin_idxs, reverse=True))
 
 
 def bagging_indices(arr_idxs, idxlist):
@@ -131,8 +130,8 @@ def bagging_indices(arr_idxs, idxlist):
     """
     def bagging(x, y):
         if isinstance(x[y], list):
-            return x[: y - 1] + [[x[y - 1]] + x[y]] + x[y + 1:]
-        return x[: y - 1] + [x[y - 1: y + 1]] + x[y + 1:]
+            return x[: y-1] + [[x[y-1]] + x[y]] + x[y+1:]
+        return x[: y-1] + [x[y-1: y+1]] + x[y+1:]
     # 倒序循环需合并的列表，正序会导致表索引改变，合并出错
     return reduce(bagging, [arr_idxs] + sorted(idxlist, reverse=True))
 
@@ -177,10 +176,16 @@ def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     """生成合并结果."""
     # 根据选取的切点合并列联表
     merged_arr = merge_arr_by_idx(arr, merge_idxs)
-    shape = arr_badrate_shape(merged_arr, I_min, U_min)
+    shape = arr_badrate_shape(merged_arr)
     # badrate的形状符合先验形状的分箱方式保留下来
     if pd.isna(shape) or (shape not in variable_shape):
         return
+    elif shape in ['I', 'D']:
+        if merged_arr.shape[0] < I_min:
+            return
+    else:
+        if merged_arr.shape[0] < U_min:
+            return
     detail = calwoe(merged_arr, arr_na)
     woes = detail['WOE']
     tol = cal_min_tol(woes[:-1])
@@ -202,82 +207,99 @@ def cal_min_tol(arr):
     return np.min(np.abs(arr_[1:] - arr_[:-1]))
 
 
-def merge_bin_by_idx(crs, idxlist):
-    """
-    合并分箱，返回合并后的列联表和切点，合并过程中不会改变缺失组，向下合并的方式.
-
-    input
-        df          bin和[0, 1]的列联表
-        idxlist     需要合并的箱的索引，列表格式
-    """
-    cross = crs[crs.index != -1].copy(deep=True).values
-    cols = crs.columns
-    # 倒序循环需合并的列表，正序会导致表索引改变，合并出错
-    for idx in idxlist[::-1]:
-        cross[idx] = cross[idx-1: idx+1].sum(axis=0)
-        cross = np.delete(cross, idx-1, axis=0)
-    cross = pd.DataFrame(cross, columns=cols)\
-        .append(crs[crs.index == -1])
-    return cross
+def best_merge_by_idx(arr, idx):
+    """."""
+    # inf_idx确定合并索引的下界，下界不低于1
+    if idx == 0:
+        merge_idx = 1
+    # sup_idx确定合并索引的上界，上界不超过箱数
+    elif idx == arr.shape[0] - 1:
+        merge_idx = idx
+    else:
+        merge_idx = slc_min_dist(arr[idx-1: idx+2, :]) + idx - 1
+    return merge_arr_by_idx(arr, [merge_idx]), merge_idx
 
 
-def merge_lowpct_zero(df, cut, variable_type, thrd_PCT=0.05, thrd_n=None,
-                      mthd='PCT'):
+def merge_lowpct(arr, thrd_PCT):
     """
-    合并个数为0和占比过低的箱，不改变缺失组的结果.
+    合并占比过低的箱.
 
-    input
-        df          bin和[0, 1]的列联表
-        cut         原始切点
-        thrd_PCT    占比阈值
-        mthd        合并方法
-            PCT     合并占比过低的箱
-            zero    合并个数为0的箱
+    Parameters
+    ----------
+    arr
+        bin和[0, 1]的数组
+    thrd_PCT
+        占比阈值
+
+    Return
+    ----------
+    arr: np.array
+    idxlist: list
     """
-    cross = df[df.index != -1].copy(deep=True)
-    s = 1
-    t_cut = cut.copy()
-    total = df.sum().sum()
-    thrd_n = thrd_n or total * thrd_PCT
-    thrd_PCT = thrd_n / total
-    while s:
-        row_margin = cross.sum(axis=1)
-        min_num = row_margin.min()
-        # 找到占比最低的组或个数为0的组
-        if mthd.upper() == 'PCT':
-            min_idx = row_margin.idxmin()
-        else:
-            zero_idxs = cross[(cross == 0).any(axis=1)].index
-            if len(zero_idxs) >= 1:
-                min_idx = zero_idxs[0]
-                min_num = 0
-            else:
-                min_num = np.inf
+    arr = arr.copy()
+    total = arr.sum()
+    arr_idxs = list(range(arr.shape[0]))
+    idxlist = []
+    while True:
+        row_margin = arr.sum(axis=1)
+        min_idx = row_margin.argmin()
+        min_num = row_margin[min_idx]
+        len_arr = arr.shape[0]
         # 占比低于阈值则合并
-        if min_num/total <= thrd_PCT and cross.shape[0] > 1:
-            idxs = list(cross.index)
-            # 最低占比的组的索引作为需要合并的组
-            # sup_idx确定合并索引的上界，上界不超过箱数
-            # inf_idx确定合并索引的下界，下界不低于0
-            min_idx_row = idxs.index(min_idx)
-            sup_idx = idxs[min(len(cross)-1, min_idx_row+1)]
-            inf_idx = idxs[max(0, min_idx_row-1)]
-            # 需合并组为第一组，向下合并
-            if min_idx == idxs[0]:
-                merge_idx = idxs[1]
-            # 需合并组为最后一组，向上合并
-            elif min_idx == idxs[-1]:
-                merge_idx = min_idx
-            elif sup_idx == inf_idx:
-                merge_idx = inf_idx
-            # 介于第一组和最后一组之间，找向上或向下最近的组合并
-            else:
-                merge_idx = slc_min_dist(cross.loc[inf_idx: sup_idx])
-            cross = merge_bin_by_idx(cross, [merge_idx])
-            t_cut = cut_adj(t_cut, [merge_idx], variable_type)
+        if min_num/total <= thrd_PCT and len_arr > 1:
+            arr, merge_idx = best_merge_by_idx(arr, min_idx)
+            bulkhead = arr_idxs.pop(merge_idx)
+            idxlist.append(bulkhead)
         else:
-            s = 0
-    return cross.append(df[df.index == -1]), t_cut
+            return arr, sorted(idxlist)
+
+
+def merge_fewnum(arr, thrd_n):
+    """
+    合并个数少的箱.
+
+    Parameters
+    ----------
+    arr
+        bin和[0, 1]的数组
+    thrd_n
+        箱中总数的最少样本数
+
+    Return
+    ----------
+    arr: np.array
+    idxlist: list
+    """
+    thrd_pct = thrd_n / arr.sum()
+    return merge_lowpct(arr, thrd_pct)
+
+
+def merge_zeronum(arr):
+    """
+    合并个数为0箱.
+
+    Parameters
+    ----------
+    arr
+        bin和[0, 1]的数组
+
+    Return
+    ----------
+    arr: np.array
+    idxlist: list
+    """
+    arr = arr.copy()
+    arr_idxs = list(range(arr.shape[0]))
+    zero_ = np.array(arr_idxs)[(arr == 0).any(axis=1)]
+    idxlist = []
+    while zero_.shape[0] > 0:
+        # 占比低于阈值则合并
+        min_idx = zero_[0]
+        zero_ = zero_[1:]
+        arr, merge_idx = best_merge_by_idx(arr, min_idx)
+        bulkhead = arr_idxs.pop(merge_idx)
+        idxlist.append(bulkhead)
+    return arr, sorted(idxlist)
 
 
 def calwoe(arr, arr_na, modify=True):
@@ -307,6 +329,20 @@ def calwoe(arr, arr_na, modify=True):
             'event_num': arr[:, 1], 'WOE': WOE.round(4), 'SUMIV': iv.sum()}
 
 
+def cut_to_interval(cut, variable_type):
+    """切分点转换为字符串区间."""
+    bin_cnt = len(cut) - 1
+    if not issubclass(variable_type, (vtype.Discrete, pd.CategoricalDtype)):
+        cut_str = {int(x): '(' + ','.join([str(cut[x]), str(cut[x+1])]) + ']'
+                   for x in range(int(bin_cnt))}
+    else:
+        d = defaultdict(list)
+        for k, v in cut.items():
+            d[v].append(str(k))
+        cut_str = {int(k): '['+','.join(v)+']' for k, v in d.items()}
+    return cut_str
+
+
 # def calwoe(df, modify=True):
 #     """计算WOE、IV及分箱细节."""
 #     warnings.filterwarnings('ignore')
@@ -333,18 +369,3 @@ def calwoe(arr, arr_na, modify=True):
 #     return pd.DataFrame({'all_num': row_margin, 'event_rate': event_rate,
 #                          'event_num': cross[:, 1], 'WOE': WOE.round(4), 'IV': iv},
 #                         index=df.index).to_dict(orient='index'), iv.sum()
-
-
-
-def cut_to_interval(cut, variable_type):
-    """切分点转换为字符串区间."""
-    bin_cnt = len(cut) - 1
-    if not issubclass(variable_type, (vtype.Discrete, pd.CategoricalDtype)):
-        cut_str = {int(x): '(' + ','.join([str(cut[x]), str(cut[x+1])]) + ']'
-                   for x in range(int(bin_cnt))}
-    else:
-        d = defaultdict(list)
-        for k, v in cut.items():
-            d[v].append(str(k))
-        cut_str = {int(k): '['+','.join(v)+']' for k, v in d.items()}
-    return cut_str
