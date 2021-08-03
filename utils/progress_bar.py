@@ -5,16 +5,28 @@ Created on Mon Jul 26 23:39:07 2021
 @author: Lenny
 """
 
+import sys
+import ray
 from asyncio import Event
 from typing import Tuple
 from time import sleep
-
-import ray
 from ray.actor import ActorHandle
 from tqdm import tqdm
 
 
 PBAR_FORMAT = "Possible: {total} | Elapsed: {elapsed} | Progress: {l_bar}{bar}"
+
+
+def make_tqdm_iterator(**kwargs):
+    """产生tqdm进度条迭代器."""
+    options = {
+        "file": sys.stdout,
+        "leave": True,
+        'bar_format': PBAR_FORMAT
+    }
+    options.update(kwargs)
+    iterator = tqdm(**options)
+    return iterator
 
 
 @ray.remote
@@ -101,10 +113,13 @@ class ProgressBar:
 
 
 if __name__ == '__main__':
+    def tslp(i):
+        sleep(i / 2.0)
+
     @ray.remote
     def sleep_then_increment(i: int, pba: ActorHandle) -> int:
         """func."""
-        sleep(i / 2.0)
+        tslp(i)
         pba.update.remote(1)
         return i
 

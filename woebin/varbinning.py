@@ -6,36 +6,22 @@ Created on Sun Jan 24 16:39:10 2021
 """
 
 
-import ray
 import pandas as pd
 import numpy as np
 import scipy.stats as sps
 from copy import deepcopy
 from itertools import (product, combinations)
+from scipy.special import comb
 import autolrscorecard.variable_types.variable as vtype
 from autolrscorecard.utils.validate import (
     param_in_validate, param_contain_validate)
 from autolrscorecard.utils.performance_utils import (
     gen_cut, gen_cross, apply_woe, apply_cut_bin)
-from autolrscorecard.utils.woebin_utils import (
-    merge_lowpct_zero, make_tqdm_iterator, gen_merged_bin,
-    calwoe, cut_to_interval, cut_adjust, cut_diff_ptp)
+from autolrscorecard.utils import (
+    merge_lowpct_zero, make_tqdm_iterator, calwoe, cut_to_interval,
+    alsc_parallel)
+from .gen_var_bin_funcs import parallel_gen_var_bin, one_core_gen_var_bin
 from autolrscorecard.plotfig import plot_bin
-from autolrscorecard.utils.progress_bar import ProgressBar
-
-
-@ray.remote
-def batch_gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
-                         tolerance, cut, qt, pba):
-    """使用RAY多核计算."""
-    var_bin = gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min,
-                             variable_shape, tolerance)
-    cut = cut_adjust(cut, merge_idxs)
-    mindiffstep = cut_diff_ptp(cut, qt)
-    if var_bin is not None:
-        var_bin.update({'cut': cut, 'mindiffstep': mindiffstep})
-    pba.update.remote(1)
-    return var_bin
 
 
 class VarBinning:
@@ -43,8 +29,8 @@ class VarBinning:
 
     def __init__(self, cut_cnt=50, thrd_PCT=0.025, thrd_n=None,
                  max_bin_cnt=6, I_min=3, U_min=4, cut_mthd='eqqt',
-                 variable_shape='IDU', tolerance=0, variable_type=vtype.Summ(2),
-                 **kwargs):
+                 variable_shape='IDU', tolerance=0,
+                 variable_type=vtype.Summ(2), **kwargs):
         self.cut_cnt = cut_cnt
         self.thrd_PCT = thrd_PCT
         self.thrd_n = thrd_n
@@ -100,6 +86,11 @@ class VarBinning:
         self.data['selected_best'] = bb
 
     def _gen_comb_bins(self, crs, crs_na, cut):
+        def comb_comb(hulkheads, loops):
+            for loop in loops:
+                for bi in combinations(hulkheads, loop):
+                    yield bi
+
         cross = crs.copy()
         minnum_bin_I = self.I_min
         minnum_bin_U = self.U_min
@@ -107,6 +98,7 @@ class VarBinning:
         maxnum_bin = self.max_bin_cnt
         qt = self.quantile
         tol = self.tolerance
+        describe = self.indep
         if 'U' not in vs:
             minnum_bin = minnum_bin_I
         elif 'I' not in vs and 'D' not in vs:
@@ -119,20 +111,21 @@ class VarBinning:
         maxnum_hulkhead_loops = max(rawnum_bin - minnum_bin, 0)
         minnum_hulkhead_loops = max(rawnum_bin - maxnum_bin, 0)
         loops_ = range(minnum_hulkhead_loops, maxnum_hulkhead_loops)
-        bcs = [bi for loop in loops_
-               for bi in combinations(hulkhead_list, loop)]
-        lbcs = len(bcs)
+        # bcs = [bi for loop in loops_
+        #        for bi in combinations(hulkhead_list, loop)]
+        bcs = comb_comb(hulkhead_list, loops_)
+        lbcs = sum([comb(len(hulkhead_list), loop) for loop in loops_])
         if lbcs <= 0:
             return {}
-        # 多核计算
-        pb = ProgressBar(lbcs, 'tt')
-        actor = pb.actor
-        refs = [batch_gen_merged_bin(
-            crs, crs_na, bin_idxs, minnum_bin_I, minnum_bin_U, vs, tol, cut,
-            qt, actor)
-            for bin_idxs in bcs]
-        pb.print_until_done()
-        var_bins = ray.get(refs)
+        # 多核并行计算
+        if alsc_parallel.is_enabled:
+            var_bins = parallel_gen_var_bin(
+                bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
+                qt, describe, lbcs)
+        else:
+            var_bins = one_core_gen_var_bin(
+                bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
+                qt, describe, lbcs)
         var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
         return var_bin_dic
 

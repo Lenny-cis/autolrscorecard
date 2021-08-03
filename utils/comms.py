@@ -5,6 +5,8 @@ Created on Mon Jan 25 16:35:58 2021
 @author: linjianing
 """
 
+import ray
+
 
 def update_dict_value(orient_dict, new_dict, func):
     """根据func更新嵌套字典最内层."""
@@ -15,3 +17,30 @@ def update_dict_value(orient_dict, new_dict, func):
             yield (key, func(val, new_dict[key]))
         else:
             yield (key, val)
+
+
+class Parallel:
+    """并行计算启动器."""
+
+    def __init__(self):
+        pass
+
+    def enable(self):
+        """启动."""
+        if not self.is_enabled:
+            ray.init()
+
+    def close(self):
+        """关闭."""
+        if self.is_enabled:
+            ray.shutdown()
+
+    @property
+    def is_enabled(self):
+        """是否启动."""
+        return ray.is_initialized()
+
+
+alsc_parallel = Parallel()
+
+test_a = 1

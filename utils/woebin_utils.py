@@ -6,27 +6,14 @@ Created on Sun Jan 24 15:23:33 2021
 """
 
 
-import sys
 import warnings
 import numpy as np
 import pandas as pd
 import scipy.stats as sps
-from tqdm import tqdm
 from copy import deepcopy
 from collections import defaultdict
 from functools import reduce
 import autolrscorecard.variable_types.variable as vtype
-
-
-def make_tqdm_iterator(**kwargs):
-    """产生tqdm进度条迭代器."""
-    options = {
-        "file": sys.stdout,
-        "leave": True
-    }
-    options.update(kwargs)
-    iterator = tqdm(**options)
-    return iterator
 
 
 def is_shape_I(values):
