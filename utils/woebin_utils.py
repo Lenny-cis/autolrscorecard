@@ -108,7 +108,17 @@ def slc_min_dist(arr):
 
 
 def cut_adjust(cut, bin_idxs):
-    """切分点调整."""
+    """
+    切分点调整.
+
+    Parameters
+    ----------
+    cut: list or dict
+        连续型为list的cut
+        分类型为dict的cut
+    bin_idxs: list
+        隔板号,1 to len(cut) - 1 or len(cut.keys()) - 1
+    """
     def cut_dict_adjust(cut_dict, idx):
         return {k: v-1 if v >= idx else v for k, v in cut_dict.items()}
 
@@ -302,7 +312,40 @@ def merge_zeronum(arr):
     return arr, sorted(idxlist)
 
 
-def calwoe(arr, arr_na, modify=True):
+def merge_lowpct_zero(arr, cut, thrd_PCT=0.03, thrd_n=None):
+    """
+    合并地占比和0的箱.
+
+    Parameters
+    ----------
+    arr : np.array
+        bin和[0, 1]的数组.
+    cut: list
+        切点集合
+    thrd_PCT : float
+        占比阈值.
+    thrd_n : int, optional
+        箱中总数的最少样本数. The default is None. 如果提供则仅考虑数量不考虑占比.
+
+    Returns
+    -------
+    arr: np.array
+        合并的结果
+    cut: list
+        合并调整后的cut
+    """
+    arr, idxlist = merge_zeronum(arr)
+    cut = cut_adjust(cut, idxlist)
+    if thrd_n is not None:
+        arr, idxlist = merge_fewnum(arr, thrd_n)
+        cut = cut_adjust(cut, idxlist)
+        return arr, cut
+    arr, idxlist = merge_lowpct(arr, thrd_PCT)
+    cut = cut_adjust(cut, idxlist)
+    return arr, cut
+
+
+def calwoe(arr, arr_na, precision=4, modify=True):
     """计算WOE、IV及分箱细节."""
     warnings.filterwarnings('ignore')
     arr = np.append(arr, arr_na, axis=0)
@@ -326,7 +369,52 @@ def calwoe(arr, arr_na, modify=True):
     iv = (event_prop - non_event_prop) * WOE
     warnings.filterwarnings('default')
     return {'all_num': row_margin, 'event_rate': event_rate, 'IV': iv,
-            'event_num': arr[:, 1], 'WOE': WOE.round(4), 'SUMIV': iv.sum()}
+            'event_num': arr[:, 1], 'WOE': WOE.round(precision),
+            'SUMIV': iv.sum()}
+
+
+def cut_diff_ptp(cut, qt):
+    """
+    cut前后两个值之间的差的max-min.
+
+    Parameters
+    ----------
+    cut : list
+        切分点，[-np.inf, ..., np.inf].
+    qt : list
+        四分位列表[min, q25, q50, q75, max].
+
+    Returns
+    -------
+    float or int
+        切点差值的差值.
+
+    """
+    clip_min, clip_max = np.clip(
+        qt,
+        2.5 * qt[1] - 1.5 * qt[3], 2.5 * qt[3] - 1.5 * qt[1])[[0, -1]]
+    x = deepcopy(cut)
+    x[0] = qt[0] if clip_min > x[1] else clip_min
+    x[-1] = qt[-1] if clip_max < x[-2] else clip_max
+    return np.ptp(np.diff(x))
+
+
+def normalize(x):
+    """
+    归一化.
+
+    Parameters
+    ----------
+    x : series or array
+
+    Returns
+    -------
+    series or array
+
+    """
+    x_min = x.min()
+    x_max = x.max()
+    return (x - x_min)/(x_max - x_min)
 
 
 def cut_to_interval(cut, variable_type):

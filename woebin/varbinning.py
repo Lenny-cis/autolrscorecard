@@ -9,29 +9,42 @@ Created on Sun Jan 24 16:39:10 2021
 import ray
 import pandas as pd
 import numpy as np
-import itertools as its
 import scipy.stats as sps
 from copy import deepcopy
-from itertools import product
+from itertools import (product, combinations)
 import autolrscorecard.variable_types.variable as vtype
 from autolrscorecard.utils.validate import (
     param_in_validate, param_contain_validate)
 from autolrscorecard.utils.performance_utils import (
     gen_cut, gen_cross, apply_woe, apply_cut_bin)
 from autolrscorecard.utils.woebin_utils import (
-    merge_lowpct_zero, make_tqdm_iterator, merge_bin_by_idx, bad_rate_shape,
-    cut_adj, calwoe, cut_to_interval)
+    merge_lowpct_zero, make_tqdm_iterator, gen_merged_bin,
+    calwoe, cut_to_interval, cut_adjust, cut_diff_ptp)
 from autolrscorecard.plotfig import plot_bin
 from autolrscorecard.utils.progress_bar import ProgressBar
 
 
 @ray.remote
+def batch_gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
+                         tolerance, cut, qt, pba):
+    """使用RAY多核计算."""
+    var_bin = gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min,
+                             variable_shape, tolerance)
+    cut = cut_adjust(cut, merge_idxs)
+    mindiffstep = cut_diff_ptp(cut, qt)
+    if var_bin is not None:
+        var_bin.update({'cut': cut, 'mindiffstep': mindiffstep})
+    pba.update.remote(1)
+    return var_bin
+
+
 class VarBinning:
     """探索性分箱."""
 
-    def __init__(self, cut_cnt=50, thrd_PCT=0.025, thrd_n=None, verbose=True,
-                 max_bin_cnt=7, I_min=3, U_min=4, cut_mthd='eqqt',
-                 variable_shape=None, tolerance=0, **kwargs):
+    def __init__(self, cut_cnt=50, thrd_PCT=0.025, thrd_n=None,
+                 max_bin_cnt=6, I_min=3, U_min=4, cut_mthd='eqqt',
+                 variable_shape='IDU', tolerance=0, variable_type=vtype.Summ(2),
+                 **kwargs):
         self.cut_cnt = cut_cnt
         self.thrd_PCT = thrd_PCT
         self.thrd_n = thrd_n
@@ -39,11 +52,11 @@ class VarBinning:
         self.I_min = I_min
         self.U_min = U_min
         self.cut_mthd = cut_mthd
-        self.variable_shape = list(variable_shape) or list('IDU')
-        self.variable_type = type(kwargs.get('variable_type'))
+        self.variable_shape = list(variable_shape)
+        self.variable_type = type(variable_type)
+        self.prec = variable_type.prec
         self.tolerance = tolerance
         self.describe = kwargs.get('describe', '未知')
-        self.verbose = verbose
         self.data = {'bins_set': {}, 'best_bins': {}, 'selected_best': {}}
         param_in_validate(
             self.cut_mthd, ['eqqt', 'eqdist'],
@@ -86,109 +99,44 @@ class VarBinning:
         """已选择的最优分箱."""
         self.data['selected_best'] = bb
 
-    def _lowpct_zero_merge(self, crs, cut):
-        cross = crs.copy(deep=True)
-        cross, pct_cut = merge_lowpct_zero(cross, cut, self.variable_type,
-                                           thrd_PCT=self.thrd_PCT,
-                                           thrd_n=self.thrd_n,
-                                           mthd='PCT')
-        cross, t_cut = merge_lowpct_zero(cross, pct_cut, self.variable_type,
-                                         thrd_PCT=self.thrd_PCT,
-                                         thrd_n=self.thrd_n,
-                                         mthd='zero')
-        return cross, t_cut
-
-    def _gen_comb_bins(self, crs, cut, verbose=False):
-        def _normalize(x):
-            x_min = x.min()
-            x_max = x.max()
-            return (x - x_min)/(x_max - x_min)
-
-        def _ptp(x, qt):
-            if isinstance(x, dict):
-                return -1 * np.ptp(x.values.value_counts())
-            clip_min, clip_max = np.clip(
-                qt,
-                2.5 * qt[1] - 1.5 * qt[3], 2.5 * qt[3] - 1.5 * qt[1])[[0, -1]]
-            x = deepcopy(x)
-            x[0] = qt[0] if clip_min > x[1] else clip_min
-            x[-1] = qt[-1] if clip_max < x[-2] else clip_max
-            return -1 * np.ptp(np.diff(x))
-
-        def _caltol(woes):
-            woe_ = pd.Series(woes)
-            woe_ = woe_.loc[woe_.index != -1]
-            return np.min(np.abs(woe_ - woe_.shift()))
-
-        def _gen_merged_bin(cross, merge_idxs, pba):
-            # 根据选取的切点合并列联表
-            merged = merge_bin_by_idx(cross, merge_idxs)
-            shape = bad_rate_shape(merged, self.I_min, self.U_min)
-            # badrate的形状符合先验形状的分箱方式保留下来
-            if pd.isna(shape) or shape not in self.variable_shape:
-                return
-            detail, iv = calwoe(merged)
-            woe = {key: val['WOE'] for key, val in detail.items()}
-            tol = _caltol(woe)
-            if tol <= self.tolerance:
-                return
-            chi, p, dof, expFreq =\
-                sps.chi2_contingency(
-                        merged.loc[~merged.index.isin([-1]), :].values,
-                        correction=False)
-            var_entropy = sps.entropy(pd.Series(
-                [val['all_num'] for key, val in detail.items()
-                 if key != -1]))
-            new_cut = cut_adj(cut, merge_idxs, self.variable_type)
-            ptp_ = _ptp(new_cut, self.quantile)
-            var_bin_ = {
-                'detail': detail, 'IV': iv, 'flogp': -np.log(max(p, 1e-5)),
-                'entropy': var_entropy, 'shape': shape,
-                'bin_cnt': len(merged)-1, 'cut': new_cut, 'WOE': woe,
-                'tolerance': tol, 'minptp': ptp_
-                }
-            pba.update.remote(1)
-            return var_bin_
-
-        cross = crs.copy(deep=True)
-        min_I = self.I_min - 1
-        min_U = self.U_min - 1
-        if 'U' not in self.variable_shape:
-            min_cut_cnt = min_I
-        elif 'I' not in self.variable_shape and 'D' not in self.variable_shape:
-            min_cut_cnt = min_U
+    def _gen_comb_bins(self, crs, crs_na, cut):
+        cross = crs.copy()
+        minnum_bin_I = self.I_min
+        minnum_bin_U = self.U_min
+        vs = self.variable_shape
+        maxnum_bin = self.max_bin_cnt
+        qt = self.quantile
+        tol = self.tolerance
+        if 'U' not in vs:
+            minnum_bin = minnum_bin_I
+        elif 'I' not in vs and 'D' not in vs:
+            minnum_bin = minnum_bin_U
         else:
-            min_cut_cnt = min(min_I, min_U)
-        max_cut_cnt = self.max_bin_cnt - 1
-        cut_point_list = [x for x in cross.index[:] if x != -1][1:]
-        cut_point_cnt = len(cut_point_list)
+            minnum_bin = min(minnum_bin_I, minnum_bin_U)
+        rawnum_bin = cross.shape[0]
+        hulkhead_list = list(range(1, cross.shape[0]))
         # 限定分组数的上下限
-        max_cut_loops_cnt = cut_point_cnt - min_cut_cnt + 1
-        min_cut_loops_cnt = max(cut_point_cnt - max_cut_cnt, 0)
-        var_bin_dic = {}
-        s = 0
-        loops_ = range(min_cut_loops_cnt, max_cut_loops_cnt)
+        maxnum_hulkhead_loops = max(rawnum_bin - minnum_bin, 0)
+        minnum_hulkhead_loops = max(rawnum_bin - maxnum_bin, 0)
+        loops_ = range(minnum_hulkhead_loops, maxnum_hulkhead_loops)
         bcs = [bi for loop in loops_
-               for bi in its.combinations(cut_point_list, loop)]
+               for bi in combinations(hulkhead_list, loop)]
         lbcs = len(bcs)
         if lbcs <= 0:
-            return var_bin_dic
-        tqdm_options = {'total': lbcs, 'description': self.indep}
-        pb = ProgressBar(**tqdm_options)
+            return {}
+        # 多核计算
+        pb = ProgressBar(lbcs, 'tt')
         actor = pb.actor
-
-        refs = [_gen_merged_bin.remote(cross, bin_idxs, actor)
-                for bin_idxs in bcs]
-        unfinished = refs
-        while unfinished:
-            finished, unfinished = ray.wait(unfinished, num_returns=1)
-            var_bin_dic[s] = ray.get(finished)
-            s += 1
+        refs = [batch_gen_merged_bin.remote(
+            crs, crs_na, bin_idxs, minnum_bin_I, minnum_bin_U, vs, tol, cut,
+            qt, actor)
+            for bin_idxs in bcs]
+        var_bins = ray.get(refs)
+        var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
         return var_bin_dic
 
     def fit(self, x, y):
         """单变量训练."""
-        verbose = self.verbose
         if x.dropna().nunique() <= 1:
             return self
         self.dep = y.name
@@ -199,13 +147,16 @@ class VarBinning:
         else:
             self.quantile = []
         cut = gen_cut(x, self.variable_type,
-                      n=self.cut_cnt, mthd=self.cut_mthd, precision=4)
+                      n=self.cut_cnt, mthd=self.cut_mthd,
+                      precision=self.prec)
         cross, cut = gen_cross(x, y, cut, self.variable_type)
         if (cross.loc[cross.index != -1, 0] == 0).all()\
                 or (cross.loc[cross.index != -1, 1] == 0).all():
             return self
-        cross, cut = self._lowpct_zero_merge(cross, cut)
-        bin_dic = self._gen_comb_bins(cross, cut, verbose)
+        crs = cross.loc[cross.index != -1, :].values
+        crs_na = cross.loc[cross.index == -1, :].values
+        crs, cut = merge_lowpct_zero(crs, cut, self.thrd_PCT, self.thrd_n)
+        bin_dic = self._gen_comb_bins(crs, crs_na, cut)
         self.bins_set = bin_dic
         return self
 

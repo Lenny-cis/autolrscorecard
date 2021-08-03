@@ -73,7 +73,7 @@ class Count(Numeric):
 class Summ(Numeric):
     """汇总型."""
 
-    def __init__(self, prec=1, ser=None):
+    def __init__(self, prec=2, ser=None):
         super().__init__(prec, ser)
 
     @property

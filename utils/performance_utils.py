@@ -31,8 +31,8 @@ def gen_cut_summ(ser, n=10, mthd='eqqt', precision=4):
     if len(rcut) <= 2:
         return [-np.inf, np.inf]
     if mthd == 'eqqt':
-        cut = list(np.unique(pd.qcut(ser, n, retbins=True, duplicates='drop')[1]
-                   .round(precision)))
+        cut = list(np.unique(pd.qcut(ser, n, retbins=True, duplicates='drop')
+                             [1].round(precision)))
     elif mthd == 'eqdist':
         cut = list(np.unique(pd.cut(ser, n, retbins=True, duplicates='drop')[1]
                    .round(precision)))
@@ -59,7 +59,8 @@ def gen_cut_discrete(ser):
 def gen_cut(ser, var_type, **kwargs):
     """生成切分点."""
     if issubclass(var_type, (vtype.Summ, np.number)):
-        summ_kw = {key: val for key, val in kwargs.items() if key in ['n', 'mthd', 'precision']}
+        summ_kw = {key: val for key, val in kwargs.items()
+                   if key in ['n', 'mthd', 'precision']}
         return gen_cut_summ(ser, **summ_kw)
     if issubclass(var_type, vtype.Count):
         return gen_cut_count(ser)
@@ -77,9 +78,10 @@ def gen_cross(ser, y, cut, var_type):
     cross = df.groupby([x, 'y']).size().unstack()
     cross.columns = cross.columns.astype('int')
     allsize = df.groupby([y]).size()
-    na_cross = pd.DataFrame({0: np.nansum([allsize.loc[0], -cross.sum().loc[0]]),
-                             1: np.nansum([allsize.loc[1], -cross.sum().loc[1]])},
-                            index=[-1])
+    na_cross = pd.DataFrame({
+        0: np.nansum([allsize.loc[0], -cross.sum().loc[0]]),
+        1: np.nansum([allsize.loc[1], -cross.sum().loc[1]])},
+        index=[-1])
     if issubclass(var_type, vtype.Discrete):
         if not var_type.ordered:
             cross['eventRate'] = cross[1]/np.nansum(cross, axis=1)
