@@ -127,10 +127,11 @@ class VarBinning:
         # 多核计算
         pb = ProgressBar(lbcs, 'tt')
         actor = pb.actor
-        refs = [batch_gen_merged_bin.remote(
+        refs = [batch_gen_merged_bin(
             crs, crs_na, bin_idxs, minnum_bin_I, minnum_bin_U, vs, tol, cut,
             qt, actor)
             for bin_idxs in bcs]
+        pb.print_until_done()
         var_bins = ray.get(refs)
         var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
         return var_bin_dic
