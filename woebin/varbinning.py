@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 import scipy.stats as sps
 from copy import deepcopy
-from itertools import (product, combinations)
+from itertools import (product, combinations, chain)
 from scipy.special import comb
 import autolrscorecard.variable_types.variable as vtype
 from autolrscorecard.utils.validate import (
@@ -111,19 +111,19 @@ class VarBinning:
         loops_ = range(minnum_hulkhead_loops, maxnum_hulkhead_loops)
         # bcs = [bi for loop in loops_
         #        for bi in combinations(hulkhead_list, loop)]
-        bcs = comb_comb(hulkhead_list, loops_)
-        lbcs = int(sum([comb(len(hulkhead_list), loop) for loop in loops_]))
+        bcs = list(chain.from_iterable(comb_comb(hulkhead_list, loops_)))
+        lbcs = len(bcs)
         if lbcs <= 0:
             return {}
         # 多核并行计算
         if alsc_parallel.is_enabled:
             var_bins = parallel_gen_var_bin(
                 bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
-                qt, describe, lbcs)
+                qt, describe)
         else:
             var_bins = one_core_gen_var_bin(
                 bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
-                qt, describe, lbcs)
+                qt, describe)
         var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
         return var_bin_dic
 

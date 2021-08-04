@@ -11,7 +11,7 @@ from asyncio import Event
 from typing import Tuple
 from time import sleep
 from ray.actor import ActorHandle
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 
 # PBAR_FORMAT = "Possible: {total}|Elapsed: {elapsed}|Progress: {l_bar}{bar}"
@@ -115,11 +115,7 @@ class ProgressBar:
 
 if __name__ == '__main__':
     def tslp(i):
-        tqdm_options = {'total': 100, 'desc': 'test', 'disable': False}
-        with make_tqdm_iterator(**tqdm_options) as progressbar:
-            for j in range(100):
-                sleep(0.1)
-                progressbar.update()
+        sleep(i/2)
 
     @ray.remote
     def sleep_then_increment(i: int, pba: ActorHandle) -> int:
@@ -144,38 +140,6 @@ if __name__ == '__main__':
         tasks == list(range(num_ticks))
         num_ticks == ray.get(actor.get_counter.remote())
 
-    def tslp1(i, pba):
-        tqdm_options = {'total': 100, 'desc': 'test', 'disable': False}
-        with make_tqdm_iterator(**tqdm_options) as progressbar:
-            for j in range(100):
-                sleep(0.1)
-                progressbar.update()
-
-    @ray.remote
-    def sleep_then_increment1(i: int) -> int:
-        """func."""
-        num_ticks = 100
-        pb = ProgressBar(num_ticks, 'tt')
-        actor = pb.actor
-        for j in range(100):
-            sleep(0.1)
-            actor.update.remote(1)
-        pb.print_until_done()
-        return i
-
-    def run1():
-        """test."""
-        num_ticks = 6
-        # You can replace this with any arbitrary Ray task/actor.
-        tasks_pre_launch = [
-            sleep_then_increment1.remote(i) for i in range(0, num_ticks)
-        ]
-
-        tasks = ray.get(tasks_pre_launch)
-
-        tasks == list(range(num_ticks))
-        # num_ticks == ray.get(actor.get_counter.remote())
-
     ray.init()
-    run1()
+    run()
     ray.shutdown()

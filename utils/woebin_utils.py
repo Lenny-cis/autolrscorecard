@@ -434,14 +434,20 @@ def _gen_var_bin(arr, arr_na, bc, I_min, U_min, variable_shape,
 
 
 def parallel_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
-                         variable_shape, tolerance, cut, qt, desc, lbcs):
+                         variable_shape, tolerance, cut, qt, desc):
     """使用RAY多核计算."""
+    lbcs = len(bcs)
+    cbcs = deepcopy(bcs)
     pb = ProgressBar(lbcs, desc)
     actor = pb.actor
-    refs = [_gen_var_bin.remote(
-        arr, arr_na, bc, I_min, U_min, variable_shape, tolerance, cut,
-        qt, actor)
-        for bc in bcs]
+    num_limit = 8000
+    refs = []
+    while len(cbcs) > 0:
+        bc = cbcs[:num_limit]
+        refs.append(_gen_var_bin.remote(
+            arr, arr_na, bc, I_min, U_min, variable_shape, tolerance, cut,
+            qt, actor))
+        cbcs = cbcs[num_limit:]
     pb.print_until_done()
     remote_var_bins = ray.get(refs)
     var_bins = list(chain.from_iterable(remote_var_bins))
@@ -461,25 +467,16 @@ def gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
 
 
 def one_core_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
-                         variable_shape, tolerance, cut, qt, desc, lbcs):
+                         variable_shape, tolerance, cut, qt, desc):
     """使用单核计算."""
-    def yield_var_bin():
-        for bc in bcs:
-            var_bin = [gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
-                                   variable_shape, tolerance, cut, qt)
-                       for merge_idxs in bc]
-            yield var_bin
-
-    tqdm_options = {'total': lbcs, 'desc': desc, 'disable': False}
+    tqdm_options = {'total': len(bcs), 'desc': desc, 'disable': False}
     var_bins = []
-    with make_tqdm_iterator(**tqdm_options) as progressbar:
-        for bc in bcs:
-            print(bc)
-            vbrest = [gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
+    with make_tqdm_iterator(**tqdm_options) as onepb:
+        for merge_idxs in bcs:
+            var_bin = gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
                                   variable_shape, tolerance, cut, qt)
-                      for merge_idxs in bc]
-            var_bins.extend(vbrest)
-            progressbar.update(len(vbrest))
+            var_bins.append(var_bin)
+            onepb.update()
     return var_bins
 
 # def calwoe(df, modify=True):
