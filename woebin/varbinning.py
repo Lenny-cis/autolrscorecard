@@ -19,8 +19,7 @@ from autolrscorecard.utils.performance_utils import (
     gen_cut, gen_cross, apply_woe, apply_cut_bin)
 from autolrscorecard.utils import (
     merge_lowpct_zero, make_tqdm_iterator, calwoe, cut_to_interval,
-    alsc_parallel)
-from .gen_var_bin_funcs import parallel_gen_var_bin, one_core_gen_var_bin
+    alsc_parallel, parallel_gen_var_bin, one_core_gen_var_bin)
 from autolrscorecard.plotfig import plot_bin
 
 
@@ -88,8 +87,7 @@ class VarBinning:
     def _gen_comb_bins(self, crs, crs_na, cut):
         def comb_comb(hulkheads, loops):
             for loop in loops:
-                for bi in combinations(hulkheads, loop):
-                    yield bi
+                yield combinations(hulkheads, loop)
 
         cross = crs.copy()
         minnum_bin_I = self.I_min
@@ -114,7 +112,7 @@ class VarBinning:
         # bcs = [bi for loop in loops_
         #        for bi in combinations(hulkhead_list, loop)]
         bcs = comb_comb(hulkhead_list, loops_)
-        lbcs = sum([comb(len(hulkhead_list), loop) for loop in loops_])
+        lbcs = int(sum([comb(len(hulkhead_list), loop) for loop in loops_]))
         if lbcs <= 0:
             return {}
         # 多核并行计算
