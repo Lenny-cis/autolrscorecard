@@ -15,6 +15,7 @@ from copy import deepcopy
 from collections import defaultdict
 from itertools import chain
 from functools import reduce
+from joblib import Parallel, delayed
 import autolrscorecard.variable_types.variable as vtype
 from .progress_bar import ProgressBar, make_tqdm_iterator
 from time import sleep
@@ -422,35 +423,15 @@ def cut_to_interval(cut, variable_type):
     return cut_str
 
 
-@ray.remote
-def _gen_var_bin(arr, arr_na, bc, I_min, U_min, variable_shape,
-                 tolerance, cut, qt, pba):
-    """使用ray封装合并箱体的函数."""
-    var_bin = [gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
-                           variable_shape, tolerance, cut, qt)
-               for merge_idxs in bc]
-    pba.update.remote(len(var_bin))
-    return var_bin
-
-
 def parallel_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
-                         variable_shape, tolerance, cut, qt, desc):
-    """使用RAY多核计算."""
-    lbcs = len(bcs)
-    cbcs = deepcopy(bcs)
-    pb = ProgressBar(lbcs, desc)
-    actor = pb.actor
-    num_limit = 8000
-    refs = []
-    while len(cbcs) > 0:
-        bc = cbcs[:num_limit]
-        refs.append(_gen_var_bin.remote(
-            arr, arr_na, bc, I_min, U_min, variable_shape, tolerance, cut,
-            qt, actor))
-        cbcs = cbcs[num_limit:]
-    pb.print_until_done()
-    remote_var_bins = ray.get(refs)
-    var_bins = list(chain.from_iterable(remote_var_bins))
+                         variable_shape, tolerance, cut, qt, desc, n_jobs):
+    """使用多核计算."""
+    bcs = list(chain.from_iterable(bcs))
+    tqdm_options = {'iterable': bcs, 'desc': desc, 'disable': False}
+    pb = make_tqdm_iterator(**tqdm_options)
+    var_bins = Parallel(n_jobs=n_jobs)(delayed(gen_var_bin)(
+        arr, arr_na, merge_idxs, I_min, U_min, variable_shape, tolerance, cut,
+        qt) for merge_idxs in pb)
     return var_bins
 
 
@@ -466,18 +447,27 @@ def gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     return var_bin
 
 
-def one_core_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
-                         variable_shape, tolerance, cut, qt, desc):
-    """使用单核计算."""
-    tqdm_options = {'total': len(bcs), 'desc': desc, 'disable': False}
-    var_bins = []
-    with make_tqdm_iterator(**tqdm_options) as onepb:
-        for merge_idxs in bcs:
-            var_bin = gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
-                                  variable_shape, tolerance, cut, qt)
-            var_bins.append(var_bin)
-            onepb.update()
-    return var_bins
+# def _gen_var_bin(arr, arr_na, bc, I_min, U_min, variable_shape,
+#                  tolerance, cut, qt):
+#     """使用一次计算多个合并箱体的函数."""
+#     var_bin = [gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
+#                            variable_shape, tolerance, cut, qt)
+#                for merge_idxs in bc]
+#     return var_bin
+
+
+# def one_core_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
+#                          variable_shape, tolerance, cut, qt, desc):
+#     """使用单核计算."""
+#     tqdm_options = {'total': len(bcs), 'desc': desc, 'disable': False}
+#     var_bins = []
+#     with make_tqdm_iterator(**tqdm_options) as onepb:
+#         for merge_idxs in bcs:
+#             var_bin = gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
+#                                   variable_shape, tolerance, cut, qt)
+#             var_bins.append(var_bin)
+#             onepb.update()
+#     return var_bins
 
 # def calwoe(df, modify=True):
 #     """计算WOE、IV及分箱细节."""

@@ -19,7 +19,7 @@ from autolrscorecard.utils.performance_utils import (
     gen_cut, gen_cross, apply_woe, apply_cut_bin)
 from autolrscorecard.utils import (
     merge_lowpct_zero, make_tqdm_iterator, calwoe, cut_to_interval,
-    alsc_parallel, parallel_gen_var_bin, one_core_gen_var_bin)
+    alsc_parallel, parallel_gen_var_bin)
 from autolrscorecard.plotfig import plot_bin
 
 
@@ -29,7 +29,7 @@ class VarBinning:
     def __init__(self, cut_cnt=50, thrd_PCT=0.025, thrd_n=None,
                  max_bin_cnt=6, I_min=3, U_min=4, cut_mthd='eqqt',
                  variable_shape='IDU', tolerance=0,
-                 variable_type=vtype.Summ(2), **kwargs):
+                 variable_type=vtype.Summ(2), n_jobs=-1, **kwargs):
         self.cut_cnt = cut_cnt
         self.thrd_PCT = thrd_PCT
         self.thrd_n = thrd_n
@@ -41,6 +41,7 @@ class VarBinning:
         self.variable_type = type(variable_type)
         self.prec = variable_type.prec
         self.tolerance = tolerance
+        self.n_jobs = n_jobs
         self.describe = kwargs.get('describe', '未知')
         self.data = {'bins_set': {}, 'best_bins': {}, 'selected_best': {}}
         param_in_validate(
@@ -111,19 +112,11 @@ class VarBinning:
         loops_ = range(minnum_hulkhead_loops, maxnum_hulkhead_loops)
         # bcs = [bi for loop in loops_
         #        for bi in combinations(hulkhead_list, loop)]
-        bcs = list(chain.from_iterable(comb_comb(hulkhead_list, loops_)))
-        lbcs = len(bcs)
-        if lbcs <= 0:
-            return {}
+        bcs = comb_comb(hulkhead_list, loops_)
         # 多核并行计算
-        if alsc_parallel.is_enabled:
-            var_bins = parallel_gen_var_bin(
-                bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
-                qt, describe)
-        else:
-            var_bins = one_core_gen_var_bin(
-                bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
-                qt, describe)
+        var_bins = parallel_gen_var_bin(
+            bcs, crs, crs_na, minnum_bin_I, minnum_bin_U, vs, tol, cut,
+            qt, describe, self.n_jobs)
         var_bin_dic = {k: v for k, v in enumerate(var_bins) if v is not None}
         return var_bin_dic
 

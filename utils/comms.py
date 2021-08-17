@@ -17,30 +17,3 @@ def update_dict_value(orient_dict, new_dict, func):
             yield (key, func(val, new_dict[key]))
         else:
             yield (key, val)
-
-
-class Parallel:
-    """并行计算启动器."""
-
-    def __init__(self):
-        pass
-
-    def enable(self):
-        """启动."""
-        if not self.is_enabled:
-            ray.init()
-
-    def close(self):
-        """关闭."""
-        if self.is_enabled:
-            ray.shutdown()
-
-    @property
-    def is_enabled(self):
-        """是否启动."""
-        return ray.is_initialized()
-
-
-alsc_parallel = Parallel()
-
-test_a = 1
