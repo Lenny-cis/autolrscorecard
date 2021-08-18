@@ -6,6 +6,7 @@ Created on Sun Jan 31 14:33:17 2021
 """
 
 
+import os
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -154,27 +155,54 @@ def plotdist(score, title):
     plt.show()
 
 
-def plot_bin(details):
-    """画分箱图."""
-    _ = plt.figure(tight_layout=True)
-    for x in details.loc[:, 'var'].unique():
-        detail = details.loc[details.loc[:, 'var'] == x, :]
-        xticklabels = detail.loc[:, 'Bound']
-        ax1 = sns.barplot(list(range(len(xticklabels))),
-                          detail.loc[:, 'all_num'], label='Num')
-        plt.xlabel(detail.loc[:, 'describe'].iloc[0])
-        ax2 = ax1.twinx()
-        ax2 = sns.lineplot(list(range(len(xticklabels))),
-                           detail.loc[:, 'WOE'], color='r', label='WOE')
-        h1, l1 = ax1.get_legend_handles_labels()
-        h2, l2 = ax2.get_legend_handles_labels()
-        hlist = h1 + h2
-        llist = l1 + l2
-        ax1.set_xticklabels(list(xticklabels))
-        plt.legend(handles=hlist, labels=llist, loc='upper right')
-        plt.show()
+def plot_bins_set(bins_set, variable_type, indep, save_path=None):
+    """画分箱合集图."""
+    if 'detail' in bins_set.keys():
+        bins_set = {'selected_best': bins_set}
+    if save_path is not None:
+        plt.ioff()
+        _ = plt.figure(tight_layout=True)
+    for best_key, best_val in bins_set.items():
+        if save_path is None:
+            _ = plt.figure(tight_layout=True)
         plt.clf()
-    plt.close('all')
+        _plot_bin(best_key, best_val, variable_type, indep)
+        if save_path is not None:
+            save_file = os.path.join(
+                save_path, '_'.join([indep, str(best_key)])+'.png')
+            plt.savefig(save_file)
+        else:
+            plt.show()
+    plt.ion()
+    if save_path is not None:
+        plt.close('all')
+
+
+def _plot_bin(best_key, best_val, variable_type, indep):
+    """画分箱图."""
+    detail = pd.DataFrame.from_dict(best_val['detail'])
+    index_ = list(detail.index)
+    index_[-1] = -1
+    detail.index = index_
+    cut_str = cut_to_interval(best_val['cut'], variable_type)
+    cut_str.update({-1: 'NaN'})
+    name = '{}\n{}'.format(indep, str(best_key))
+    detail.loc[:, 'Bound'] = pd.Series(cut_str)
+    detail.loc[:, 'var'] = name
+    detail.loc[:, 'describe'] = name
+    detail.loc[:, 'x'] = range(detail.shape[0])
+    ax1 = sns.barplot(data=detail.loc[:, ['all_num', 'x']], x='x',
+                      y='all_num', label='Num')
+    plt.xlabel(detail.loc[:, 'describe'].iloc[0])
+    ax2 = ax1.twinx()
+    ax2 = sns.lineplot(data=detail.loc[:, ['WOE', 'x']], x='x', y='WOE',
+                       color='r', label='WOE')
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    hlist = h1 + h2
+    llist = l1 + l2
+    ax1.set_xticklabels(list(detail.loc[:, 'Bound']))
+    plt.legend(handles=hlist, labels=llist, loc='upper right')
 
 
 def plot_repeat_split_performance(df, title, details):

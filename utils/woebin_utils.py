@@ -6,7 +6,7 @@ Created on Sun Jan 24 15:23:33 2021
 """
 
 
-import ray
+import os
 import warnings
 import numpy as np
 import pandas as pd
@@ -15,10 +15,9 @@ from copy import deepcopy
 from collections import defaultdict
 from itertools import chain
 from functools import reduce
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, dump, load
 import autolrscorecard.variable_types.variable as vtype
-from .progress_bar import ProgressBar, make_tqdm_iterator
-from time import sleep
+from .progress_bar import make_tqdm_iterator
 
 
 def is_shape_I(values):
@@ -198,7 +197,8 @@ def gen_merged_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     var_entropy = sps.entropy(detail['all_num'][:-1])
     var_bin_ = {
         'detail': detail, 'flogp': -np.log(max(p, 1e-5)), 'tolerance': tol,
-        'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr)
+        'entropy': var_entropy, 'shape': shape, 'bin_cnt': len(merged_arr),
+        'IV': detail['IV'].sum()
         }
     return var_bin_
 
@@ -361,8 +361,7 @@ def calwoe(arr, arr_na, precision=4, modify=True):
     iv = (event_prop - non_event_prop) * WOE
     warnings.filterwarnings('default')
     return {'all_num': row_margin, 'event_rate': event_rate, 'IV': iv,
-            'event_num': arr[:, 1], 'WOE': WOE.round(precision),
-            'SUMIV': iv.sum()}
+            'event_num': arr[:, 1], 'WOE': WOE.round(precision)}
 
 
 def cut_diff_ptp(cut, qt):
@@ -423,15 +422,22 @@ def cut_to_interval(cut, variable_type):
     return cut_str
 
 
+def woe_list2dict(woelist):
+    """WOE列表转字典."""
+    dic = {i: v for i, v in enumerate(woelist[:-1])}
+    dic.update({-1: woelist[-1]})
+    return dic
+
+
 def parallel_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
                          variable_shape, tolerance, cut, qt, desc, n_jobs):
     """使用多核计算."""
     bcs = list(chain.from_iterable(bcs))
     tqdm_options = {'iterable': bcs, 'desc': desc, 'disable': False}
-    pb = make_tqdm_iterator(**tqdm_options)
+    progress_bar = make_tqdm_iterator(**tqdm_options)
     var_bins = Parallel(n_jobs=n_jobs)(delayed(gen_var_bin)(
         arr, arr_na, merge_idxs, I_min, U_min, variable_shape, tolerance, cut,
-        qt) for merge_idxs in pb)
+        qt) for merge_idxs in progress_bar)
     return var_bins
 
 
@@ -445,53 +451,3 @@ def gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min, variable_shape,
     if var_bin is not None:
         var_bin.update({'cut': cut, 'mindiffstep': mindiffstep})
     return var_bin
-
-
-# def _gen_var_bin(arr, arr_na, bc, I_min, U_min, variable_shape,
-#                  tolerance, cut, qt):
-#     """使用一次计算多个合并箱体的函数."""
-#     var_bin = [gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
-#                            variable_shape, tolerance, cut, qt)
-#                for merge_idxs in bc]
-#     return var_bin
-
-
-# def one_core_gen_var_bin(bcs, arr, arr_na, I_min, U_min,
-#                          variable_shape, tolerance, cut, qt, desc):
-#     """使用单核计算."""
-#     tqdm_options = {'total': len(bcs), 'desc': desc, 'disable': False}
-#     var_bins = []
-#     with make_tqdm_iterator(**tqdm_options) as onepb:
-#         for merge_idxs in bcs:
-#             var_bin = gen_var_bin(arr, arr_na, merge_idxs, I_min, U_min,
-#                                   variable_shape, tolerance, cut, qt)
-#             var_bins.append(var_bin)
-#             onepb.update()
-#     return var_bins
-
-# def calwoe(df, modify=True):
-#     """计算WOE、IV及分箱细节."""
-#     warnings.filterwarnings('ignore')
-#     cross = df.values
-#     col_margin = cross.sum(axis=0)
-#     row_margin = cross.sum(axis=1)
-#     event_rate = cross[:, 1] / row_margin
-#     event_prop = cross[:, 1] / col_margin[1]
-#     non_event_prop = cross[:, 0] / col_margin[0]
-#     # 将0替换为极小值，便于计算，计算后将rate为0的组赋值为其他组的最小值，
-#     # rate为1的组赋值为其他组的最大值
-#     WOE = np.log(np.where(event_prop == 0, 1e-5, event_prop)
-#                  / np.where(non_event_prop == 0, 1e-5, non_event_prop))
-#     WOE[event_rate == 0] = np.min(WOE[(event_rate != 0) & (df.index != -1)])
-#     WOE[event_rate == 1] = np.max(WOE[(event_rate != 1) & (df.index != -1)])
-#     # 调整缺失组的WOE
-#     if modify is True:
-#         if WOE[df.index == -1] == max(WOE):
-#             WOE[df.index == -1] = max(WOE[df.index != -1])
-#         elif WOE[df.index == -1] == min(WOE):
-#             WOE[df.index == -1] = 0
-#     iv = (event_prop-non_event_prop)*WOE
-#     warnings.filterwarnings('default')
-#     return pd.DataFrame({'all_num': row_margin, 'event_rate': event_rate,
-#                          'event_num': cross[:, 1], 'WOE': WOE.round(4), 'IV': iv},
-#                         index=df.index).to_dict(orient='index'), iv.sum()

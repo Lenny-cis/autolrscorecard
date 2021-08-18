@@ -18,6 +18,7 @@ arr_na = np.array([[3000, 500]])
 arr = np.append(arr, arr, axis=0)
 a = merge_arr_by_idx(arr, [1])
 a2 = merge_arr_by_idx(arr, [1, 2, 4])
+a5 = merge_arr_by_idx(arr, [])
 # error but run
 a3 = merge_arr_by_idx(arr, [0])
 # error
